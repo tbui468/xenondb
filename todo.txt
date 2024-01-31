@@ -1,0 +1,99 @@
+educational key-value database implemented in C
+
+basic file-based database
+----------------
+hello world
+database API
+making a database directory
+key-value structure
+put
+get
+a test case that does basic use
+
+removing and reusing database space
+----------------------
+delete - using valid bit in header
+iterating through all records (skipping invalid records)
+a test case that leaves giant gaps in database - add 128 records, delete 128 records and add 128 different records - datbase should only be 4 blocks in size
+freelist
+vacuuming
+a test case that reuses delete record space - test above should pass
+
+speeding up reads/writes by storing data in buffers
+----------------
+a test case that is super slow - run this test and measure time
+block structure (blocks on disk)
+page structure (page stores a block read in from disk)
+buffer manager
+LRU 
+a test case that is faster - run this test and measure time again
+
+durability
+--------------------
+a test case that causes corrupt write
+logging
+recovery
+a test case that prevents corrupt data
+
+atomicity
+-------------------
+transactions
+commit
+rollback
+
+database server
+--------------------
+sockets 101
+messaging protocol
+server
+client
+
+isolation
+--------------------
+isolation levels
+locking blocks
+
+speeding up reads by a lot (and slowing writes by a bit)
+--------------------
+indexing
+
+
+//embedded version without concurrency
+#include "xenon_db.h"
+
+int main() {
+
+    //making/opening a db with directory students
+    struct db *db = db_open("students");
+
+    //autocommit
+    struct value;
+    db_put(db, "cat", "a small feline");
+    db_get(db, "cat", &value);
+    db_delete(db, "cat");
+
+    //explicit transactions
+    struct tx *tx = tx_init(db);
+    tx_put(tx, "cat", "a small feline");
+    tx_put(tx, "dog", "a descendent of a wolf");
+    if (ok) {
+        tx_commit(tx); //will free
+    } else {
+        tx_rollback(tx); //will free
+    }
+
+    //iterate through all key/value pairs
+    db_reset(db);
+    while (db_next(db)) {
+        struct key;
+        struct value;
+        db_read_current(db, &key, &value);
+        printf("key: %s, value: %s\n", key, value);
+    }
+
+
+    db_close(db);
+
+}
+
+
