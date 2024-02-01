@@ -1,49 +1,26 @@
 educational key-value database implemented in C
 
-metadata block 0 - metadata for entire database
-index block 1 - first index block
-    .
-    .
-    .
-index block 101 - last index block
-overflow blocks
-    .
-    .
-    .
-
-metadata block:
-    total record count
-    any other data
-
+header block:
+    [Nothing yet for now]
 index block:
-    [freelist, record count in this index, overflow block ptr][records in append order]
+    [rec_count, freelist][record0, record1, ...]
 
 
-basic file-based database
-----------------
-hello world
-database API
-making a database directory
-key-value structure
-put
-get
-iterating through all records (skipping invalid records)
-a test case that does basic use
+//public api
+xndb.h
+xndb.c
 
-deleting records
--------------------------------------
-delete - using valid bit in header
-freelist - when record is deleted, put that idx 
+//reading/writing to files
+xnfile.h
+xnfile.c
 
-hash structure for faster lookup
-----------------------
-reserve block 0 for metadata <----------------------------START HERE
-    record count
-    freelist
-    any other stuff
-    data starts on block 1 onwards
-a test case that leaves giant gaps in database - add 128 records, delete 128 records and add 128 different records - datbase should only be 4 blocks in size
-a test case that reuses delete record space - test above should pass
+//system call wrappers and or utility functions
+xnutil.h
+xnutil.c
+
+//memory paging
+xnpager.h
+xnpager.c
 
 speeding up reads/writes by storing data in buffers
 ----------------
