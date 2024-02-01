@@ -1,5 +1,24 @@
 educational key-value database implemented in C
 
+metadata block 0 - metadata for entire database
+index block 1 - first index block
+    .
+    .
+    .
+index block 101 - last index block
+overflow blocks
+    .
+    .
+    .
+
+metadata block:
+    total record count
+    any other data
+
+index block:
+    [freelist, record count in this index, overflow block ptr][records in append order]
+
+
 basic file-based database
 ----------------
 hello world
@@ -8,15 +27,22 @@ making a database directory
 key-value structure
 put
 get
+iterating through all records (skipping invalid records)
 a test case that does basic use
 
-removing and reusing database space
-----------------------
+deleting records
+-------------------------------------
 delete - using valid bit in header
-iterating through all records (skipping invalid records)
+freelist - when record is deleted, put that idx 
+
+hash structure for faster lookup
+----------------------
+reserve block 0 for metadata <----------------------------START HERE
+    record count
+    freelist
+    any other stuff
+    data starts on block 1 onwards
 a test case that leaves giant gaps in database - add 128 records, delete 128 records and add 128 different records - datbase should only be 4 blocks in size
-freelist
-vacuuming
 a test case that reuses delete record space - test above should pass
 
 speeding up reads/writes by storing data in buffers
@@ -52,10 +78,6 @@ isolation
 --------------------
 isolation levels
 locking blocks
-
-speeding up reads by a lot (and slowing writes by a bit)
---------------------
-indexing
 
 
 //embedded version without concurrency
