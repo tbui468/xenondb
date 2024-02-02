@@ -1,5 +1,7 @@
 
 
-main: main.c
-	gcc main.c -o main
+main: main.c util.h util.c
+	gcc main.c util.c -o main
 
+clean:
+	rm -rf students

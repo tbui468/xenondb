@@ -10,78 +10,29 @@
 #include <errno.h>
 #include <assert.h>
 
+#include "util.h"
+
 #define XN_BLK_SZ 4096
 #define XN_BLKHDR_SZ 256
 
 #define XN_REC_SZ 256
-#define XN_RECHDR_SZ 8
+#define XN_RECHDR_SZ 8 //next (4 bytes), valid (1 byte), extra (3 bytes)
 #define XN_RECKEY_SZ 120
 #define XN_RECVAL_SZ 128
 
 //#define XN_BUCKETS 101
 #define XN_BUCKETS 3
 
-//system call wrappers
-void *xn_malloc(size_t size) {
-    void *p;
-    if (!(p = malloc(size))) {
-        fprintf(stderr, "xenondb: malloc failed\n");
-        exit(1);
-    }
-    return p;
-}
 
-void xn_free(void *ptr) {
-    free(ptr);
-}
+enum xnfld {
+    XNFLD_HDR_RECCOUNT,
+    XNFLD_HDR_FREELIST,
+    XNFLD_REC_NEXT, 
+    XNFLD_REC_VALID, 
+    XNFLD_REC_KEY, 
+    XNFLD_REC_VALUE, 
+};
 
-void xn_write(int fd, const void* buf, size_t count) {
-    int total = 0;
-    while (total < count) {
-        int result = write(fd, buf + total, count - total);
-        if (result < 0) {
-            if (errno != EINTR) {
-                fprintf(stderr, "xenondb: write failed\n");
-                exit(1);
-            }
-        } 
-
-        total += result;
-    }
-}
-
-int xn_open(const char* path, int flags, mode_t mode) {
-    int fd;
-    if ((fd = open(path, flags, mode)) == -1) {
-        fprintf(stderr, "xenondb: open failed.");
-        exit(1);
-    }
-    return fd;
-}
-
-off_t xn_seek(int fd, off_t offset, int whence) {
-    int result;
-    if ((result = lseek(fd, offset, whence)) == -1) {
-        fprintf(stderr, "xenondb: lseek failed.");
-        exit(1);
-    }
-
-    return result;
-}
-
-void xn_read(int fd, void *buf, size_t count) {
-    int result;
-    int total = 0;
-    while (total < count) {
-        int result = read(fd, buf + total, count - total);
-        if (result < 0) {
-            fprintf(stderr, "xenondb: write failed\n");
-            exit(1);
-        } 
-
-        total += result;
-    }
-}
 
 //xenon db
 struct xndb {
@@ -89,7 +40,58 @@ struct xndb {
     char data_path[256];
     int iter_block_idx;
     int iter_rec_idx;
+    struct xnpgr *pager;
 };
+
+struct xnpg {
+    char buf[XN_BLK_SZ];
+    int pins;
+    int block_idx;
+};
+
+struct xnpgr {
+    struct xnpg pages[XN_BUCKETS + 1]; //+1 is the metadata block
+    char data_path[256];
+};
+
+struct xnpg *xnpgr_pin(struct xnpgr *pager, int block_idx) {
+    struct xnpg *page = &pager->pages[block_idx];
+    page->pins++;
+    return page;
+}
+
+void xnpgr_flush(struct xnpgr *pager, struct xnpg *page) {
+    int fd = xn_open(pager->data_path, O_RDWR, 0666);
+    xn_seek(fd, page->block_idx * XN_BLK_SZ, SEEK_SET);
+    xn_write(fd, page->buf, XN_BLK_SZ);
+    close(fd);
+}
+
+void xnpgr_unpin(struct xnpgr *pager, struct xnpg *page) {
+    page->pins--;
+
+    //@TEST - flush immediately to see if tests pass
+    xnpgr_flush(pager, page);
+}
+
+struct xnpgr *xnpgr_create(const char* data_path) {
+    struct xnpgr *pager = xn_malloc(sizeof(struct xnpgr));
+
+    memcpy(pager->data_path, data_path, strlen(data_path));
+    pager->data_path[strlen(data_path)] = '\0';
+
+    int fd = xn_open(pager->data_path, O_RDWR, 0666);
+    for (int i = 0; i < XN_BUCKETS + 1; i++) {
+        pager->pages[i].pins = 0;
+        pager->pages[i].block_idx = i;
+        
+        xn_seek(fd, i * XN_BLK_SZ, SEEK_SET);
+        xn_read(fd, pager->pages[i].buf, XN_BLK_SZ);
+    }
+    close(fd);
+
+    return pager;
+}
 
 void xndb_free(struct xndb* db) {
     xn_free((void*)db);
@@ -154,20 +156,16 @@ struct xndb* xndb_init(char* path, bool make_dir) {
     xn_write(fd, buf, XN_BLK_SZ);
 
     //write remaining buckets (with next set to -1)
-    int next = -1;
-    memcpy(buf + sizeof(int), &next, sizeof(int));
+    int freelist = -1;
+    memcpy(buf + sizeof(int), &freelist, sizeof(int));
     for (int i = 0; i < XN_BUCKETS; i++) {
         xn_write(fd, buf, XN_BLK_SZ);
     }
 
-    /*
-    //write header of data file
-    char hdr[XN_BLKHDR_SZ];
-    memset(hdr, 0, XN_BLKHDR_SZ);
-    xn_seek(fd, 0, SEEK_SET);
-    xn_write(fd, hdr, XN_BLKHDR_SZ);*/
-
     close(fd);
+
+
+    db->pager = xnpgr_create(db->data_path);
 
     return db;
 }
@@ -192,77 +190,52 @@ struct xnkey {
     char data[XN_RECKEY_SZ];
 };
 
-int xndb_read_rec_count(int fd, int block_idx) {
-    char buf[XN_BLKHDR_SZ];
-    xn_seek(fd, block_idx * XN_BLK_SZ, SEEK_SET);
-    xn_read(fd, buf, XN_BLKHDR_SZ);
-    return *((int*)(buf));
+void xnpg_read_key(struct xnpg *page, int rec_idx, struct xnkey *key) {
+    char* ptr = page->buf + XN_REC_SZ * rec_idx + XN_RECHDR_SZ;
+    memcpy((char*)key, ptr, sizeof(XN_RECKEY_SZ));
 }
 
-void xndb_write_rec_count(int fd, int block_idx, int rec_count) {
-    xn_seek(fd, block_idx * XN_BLK_SZ, SEEK_SET);
-    xn_write(fd, &rec_count, sizeof(int));
+void xnpg_read_value(struct xnpg *page, int rec_idx, struct xnvalue *value) {
+    char* ptr = page->buf + XN_REC_SZ * rec_idx + XN_RECHDR_SZ + XN_RECKEY_SZ;
+    memcpy((char*)value, ptr, sizeof(XN_RECVAL_SZ));
 }
 
-void xndb_read_key(int fd, int block_idx, int idx, struct xnkey* key) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + XN_REC_SZ * idx + XN_RECHDR_SZ, SEEK_SET);
-    xn_read(fd, key, XN_RECKEY_SZ);
+int xnpg_read_rec_count(struct xnpg *page) {
+    return *((int*)(page->buf));
 }
 
-void xndb_read_value(int fd, int block_idx, int idx, struct xnvalue* value) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + XN_REC_SZ * idx + XN_RECHDR_SZ + XN_RECKEY_SZ, SEEK_SET);
-    xn_read(fd, value, XN_RECVAL_SZ);
+void xnpg_write_rec_count(struct xnpg *page, int rec_count) {
+    memcpy(page->buf, &rec_count, sizeof(int));
 }
 
-int xndb_find_idx(struct xndb *db, int block_idx, const char* key) {
-    int fd = xn_open(db->data_path, O_RDWR, 0666);
-
-    int rec_count = xndb_read_rec_count(fd, block_idx);
-    struct xnkey cur_key;
-    for (int i = 0; i < rec_count; i++) {
-        xndb_read_key(fd, block_idx, i, &cur_key);
-        if (strcmp(key, (char*)&cur_key) == 0) {
-            close(fd);
-            return i;
-        }
-    }
-
-    close(fd);
-    return -1;
+void xnpg_write_valid(struct xnpg *page, int rec_idx, bool valid) {
+    memcpy(page->buf + rec_idx * XN_REC_SZ + sizeof(int), &valid, sizeof(bool));
 }
 
-void xndb_write_valid(int fd, int block_idx, int idx, bool valid) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + idx * XN_REC_SZ + sizeof(int), SEEK_SET);
-    xn_write(fd, &valid, sizeof(bool));
+bool xnpg_read_valid(struct xnpg *page, int rec_idx) {
+    return *((bool*)(page->buf + rec_idx * XN_REC_SZ + sizeof(int)));
 }
 
-bool xndb_read_valid(int fd, int block_idx, int idx) {
-    bool valid;
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + idx * XN_REC_SZ + sizeof(int), SEEK_SET);
-    xn_read(fd, &valid, sizeof(bool));
-    return valid;
+int xnpg_read_next(struct xnpg *page, int rec_idx) {
+    return *((int*)(page->buf + rec_idx * XN_REC_SZ));
 }
 
-void xndb_write_next(int fd, int block_idx, int rec_idx, int next) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ, SEEK_SET);
-    xn_write(fd, &next, sizeof(int));
+void xnpg_write_next(struct xnpg *page, int rec_idx, int next) {
+    memcpy(page->buf + rec_idx * XN_REC_SZ, &next, sizeof(int));
 }
 
-int xndb_read_next(int fd, int block_idx, int rec_idx) {
-    int next;
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ, SEEK_SET);
-    xn_read(fd, &next, sizeof(int));
-    return next;
+struct xnstatus xnpg_write_key(struct xnpg *page, int rec_idx, const char* key) {
+    memcpy(page->buf + rec_idx * XN_REC_SZ + XN_RECHDR_SZ, key, strlen(key) + 1);
 }
 
-void xndb_write_key(int fd, int block_idx, int idx, const char* key, size_t size) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + idx * XN_REC_SZ + XN_RECHDR_SZ, SEEK_SET);
-    xn_write(fd, key, strlen(key) + 1); //include null terminator
+struct xnstatus xnpg_write_value(struct xnpg *page, int rec_idx, const char* value) {
+    memcpy(page->buf + rec_idx * XN_REC_SZ + XN_RECHDR_SZ + XN_RECKEY_SZ, value, strlen(value) + 1);
 }
 
-void xndb_write_value(int fd, int block_idx, int idx, const char* value, size_t size) {
-    xn_seek(fd, block_idx * XN_BLK_SZ + XN_BLKHDR_SZ + idx * XN_REC_SZ + XN_RECHDR_SZ + XN_RECKEY_SZ, SEEK_SET);
-    xn_write(fd, value, strlen(value) + 1); //include null terminator*/
+struct xnstatus xnpg_write_record(struct xnpg *page, int rec_idx, const char *key, const char *value) {
+    xnpg_write_valid(page, rec_idx, true);
+    xnpg_write_key(page, rec_idx, key);
+    xnpg_write_value(page, rec_idx, value);
 }
 
 int xndb_get_block_idx(const char* key) {
@@ -274,103 +247,227 @@ int xndb_get_block_idx(const char* key) {
     return total % XN_BUCKETS + 1;
 }
 
-void xndb_add_to_freelist(int fd, int block_idx, int rec_idx) {
-    int cur;
-    xn_seek(fd, block_idx * XN_BLK_SZ + sizeof(int), SEEK_SET);
-    xn_read(fd, &cur, sizeof(int));
-
-    xndb_write_next(fd, block_idx, rec_idx, cur);
-    xn_seek(fd, block_idx * XN_BLK_SZ + sizeof(int), SEEK_SET);
-    xn_write(fd, &rec_idx, sizeof(int));
+void xnpg_write_header_field(struct xnpg *page, enum xnfld fld, void* value) {
+    switch (fld) {
+    case XNFLD_HDR_RECCOUNT:
+        memcpy(page->buf, value, sizeof(int));
+        break;
+    case XNFLD_HDR_FREELIST:
+        memcpy(page->buf + sizeof(int), value, sizeof(int));
+        break;
+    default:
+        assert(false && "xenondb: invalid header field type");
+        break;
+    }
 }
 
-int xndb_remove_freelist_rec(int fd, int block_idx) {
-    int cur;
-    xn_seek(fd, block_idx * XN_BLK_SZ + sizeof(int), SEEK_SET);
-    xn_read(fd, &cur, sizeof(int));
-
-    if (cur == -1)
-        return cur;
-
-    int next = xndb_read_next(fd, block_idx, cur);
-    xn_seek(fd, block_idx * XN_BLK_SZ + sizeof(int), SEEK_SET);
-    xn_write(fd, &next, sizeof(int));
-
-    return cur;
+void xnpg_read_header_field(struct xnpg *page, enum xnfld fld, void* result) {
+    switch (fld) {
+    case XNFLD_HDR_RECCOUNT:
+        memcpy(result, page->buf, sizeof(int));
+        break;
+    case XNFLD_HDR_FREELIST:
+        memcpy(result, page->buf + sizeof(int), sizeof(int));
+        break;
+    default:
+        assert(false && "xenondb: invalid header field type");
+        break;
+    }
 }
 
-struct xnstatus xndb_put(struct xndb *db, const char *key, const char *value) {
-    assert(strlen(key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
-    assert(strlen(value) < XN_RECVAL_SZ && "value length is larger than XN_RECVAL_SZ");
+void xnpg_write_rec_field(struct xnpg *page, int rec_idx, enum xnfld fld, void* value) {
+    switch (fld) {
+    case XNFLD_REC_NEXT:
+        memcpy(page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ, value, sizeof(int));
+        break;
+    case XNFLD_REC_VALID:
+        memcpy(page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + sizeof(int), value, sizeof(bool));
+        break;
+    case XNFLD_REC_KEY:
+        memcpy(page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + XN_RECHDR_SZ, value, XN_RECKEY_SZ);
+        break;
+    case XNFLD_REC_VALUE:
+        memcpy(page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + XN_RECHDR_SZ + XN_RECKEY_SZ, value, XN_RECVAL_SZ);
+        break;
+    default:
+        assert(false && "xenondb: invalid record field type");
+        break;
+    }
+}
 
-    int block_idx = xndb_get_block_idx(key);
-    int idx = xndb_find_idx(db, block_idx, key);
-    if (idx != -1) {
-        int fd = xn_open(db->data_path, O_RDWR, 0666);
+void xnpg_read_rec_field(struct xnpg *page, int rec_idx, enum xnfld fld, void* result) {
+    switch (fld) {
+    case XNFLD_REC_NEXT:
+        memcpy(result, page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ, sizeof(int));
+        break;
+    case XNFLD_REC_VALID:
+        memcpy(result, page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + sizeof(int), sizeof(bool));
+        break;
+    case XNFLD_REC_KEY:
+        memcpy(result, page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + XN_RECHDR_SZ, XN_RECKEY_SZ);
+        break;
+    case XNFLD_REC_VALUE:
+        memcpy(result, page->buf + XN_BLKHDR_SZ + rec_idx * XN_REC_SZ + XN_RECHDR_SZ + XN_RECKEY_SZ, XN_RECVAL_SZ);
+        break;
+    default:
+        assert(false && "xenondb: invalid record field type");
+        break;
+    }
+}
 
-        xndb_write_value(fd, block_idx, idx, value, strlen(value) + 1);
+int xnpg_find_rec_idx(struct xnpg *page, const char *key) {
+    int rec_count;
+    xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
+    struct xnkey cur_key;
+    for (int i = 0; i < rec_count; i++) {
+        xnpg_read_rec_field(page, i, XNFLD_REC_KEY, &cur_key);
+        if (strcmp(key, (char*)&cur_key) == 0 )
+            return i;
+    }
 
+    return -1;
+}
+
+void xndb_add_to_freelist(struct xndb *db, int block_idx, int rec_idx) {
+    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+
+    int head_idx;
+    xnpg_read_header_field(page, XNFLD_HDR_FREELIST, &head_idx);
+    xnpg_write_rec_field(page, rec_idx, XNFLD_REC_NEXT, &head_idx);
+    xnpg_write_header_field(page, XNFLD_HDR_FREELIST, &rec_idx);
+
+    xnpgr_unpin(db->pager, page);
+}
+
+int xndb_remove_freelist_rec(struct xndb *db, int block_idx) {
+    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+
+    int head_idx;
+    xnpg_read_header_field(page, XNFLD_HDR_FREELIST, &head_idx);
+
+    if (head_idx == -1)
+        return head_idx;
+
+    int new_head_idx;
+    xnpg_read_rec_field(page, head_idx, XNFLD_REC_NEXT, &new_head_idx);
+    xnpg_write_header_field(page, XNFLD_HDR_FREELIST, &new_head_idx);
+
+    xnpgr_unpin(db->pager, page);
+    return head_idx;
+}
+
+
+//this should really be a tx function
+struct xnstatus xndb_put(struct xndb *db, const char *raw_key, const char *raw_value) {
+    assert(strlen(raw_key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
+    assert(strlen(raw_value) < XN_RECVAL_SZ && "value length is larger than XN_RECVAL_SZ");
+
+    //prepare inputs
+    struct xnkey key;
+    memset(&key, 0, XN_RECKEY_SZ);
+    struct xnvalue value;
+    memset(&value, 0, XN_RECVAL_SZ);
+
+    memcpy(&key, raw_key, strlen(raw_key) + 1);
+    memcpy(&value, raw_value, strlen(raw_value) + 1);
+
+    //check if key already exists, and replace value if so
+    int block_idx = xndb_get_block_idx((char*)&key);
+    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+    int rec_idx = xnpg_find_rec_idx(page, (char*)&key);
+    xnpgr_unpin(db->pager, page);
+
+    if (rec_idx != -1) {
+        struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+        xnpg_write_rec_field(page, rec_idx, XNFLD_REC_VALUE, (void*)&value);
+        xnpgr_unpin(db->pager, page);
+        return xnstatus_create(true, NULL);
+    }
+
+    //key doesn't exist yet
+    int free_idx = xndb_remove_freelist_rec(db, block_idx);
+    if (free_idx != -1) {
+        //reusing vacant slot
+        struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+        bool valid = true;
+        xnpg_write_rec_field(page, free_idx, XNFLD_REC_VALID, &valid);
+        xnpg_write_rec_field(page, free_idx, XNFLD_REC_KEY, (void*)&key);
+        xnpg_write_rec_field(page, free_idx, XNFLD_REC_VALUE, (void*)&value);
+        xnpgr_unpin(db->pager, page);
         return xnstatus_create(true, NULL);
     } else {
-        int fd = xn_open(db->data_path, O_RDWR, 0666);
+        //using a new slot
+        struct xnpg *page = xnpgr_pin(db->pager, block_idx);
 
-        int free_idx = xndb_remove_freelist_rec(fd, block_idx);
-        if (free_idx != -1) {
-            xndb_write_valid(fd, block_idx, free_idx, true);
-            xndb_write_key(fd, block_idx, free_idx, key, strlen(key) + 1);
-            xndb_write_value(fd, block_idx, free_idx, value, strlen(value) + 1);
-            close(fd);
-            return xnstatus_create(true, NULL);
-        }
-
-        int rec_count = xndb_read_rec_count(fd, block_idx);
+        int rec_count;
+        xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
 
         assert((rec_count + 1) * XN_REC_SZ < XN_BLK_SZ - XN_BLKHDR_SZ && "block cannot fit anymore records");
 
-        xndb_write_valid(fd, block_idx, rec_count, true);
-        xndb_write_key(fd, block_idx, rec_count, key, strlen(key) + 1);
-        xndb_write_value(fd, block_idx, rec_count, value, strlen(value) + 1);
+        bool valid = true;
+        xnpg_write_rec_field(page, rec_count, XNFLD_REC_VALID, &valid);
+        xnpg_write_rec_field(page, rec_count, XNFLD_REC_KEY, (void*)&key);
+        xnpg_write_rec_field(page, rec_count, XNFLD_REC_VALUE, (void*)&value);
 
         rec_count++;
-        xndb_write_rec_count(fd, block_idx, rec_count);
+        xnpg_write_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
 
-        close(fd);
-
+        xnpgr_unpin(db->pager, page);
         return xnstatus_create(true, NULL);
     }
 }
 
-struct xnstatus xndb_get(struct xndb *db, const char *key, struct xnvalue* result) {
-    assert(strlen(key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
+struct xnstatus xndb_get(struct xndb *db, const char *raw_key, struct xnvalue* result) {
+    assert(strlen(raw_key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
 
-    int block_idx = xndb_get_block_idx(key);
-    int idx = xndb_find_idx(db, block_idx, key);
-    int fd = xn_open(db->data_path, O_RDWR, 0666);
+    //prepare inputs
+    struct xnkey key;
+    memset(&key, 0, XN_RECKEY_SZ);
+    memcpy(&key, raw_key, strlen(raw_key) + 1);
 
-    if (idx == -1 || !xndb_read_valid(fd, block_idx, idx)) {
-        close(fd);
+    int block_idx = xndb_get_block_idx((char*)&key);
+    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+    int rec_idx = xnpg_find_rec_idx(page, (char*)&key);
+
+    if (rec_idx == -1) {
+        xnpgr_unpin(db->pager, page);
         return xnstatus_create(false, "xenondb: key not found");
     }
 
-    xndb_read_value(fd, block_idx, idx, result);
-    close(fd);
+    bool valid;
+    xnpg_read_rec_field(page, rec_idx, XNFLD_REC_VALID, &valid);
+    if (!valid) {
+        xnpgr_unpin(db->pager, page);
+        return xnstatus_create(false, "xenondb: key not found");
+    }
 
+    xnpg_read_rec_field(page, rec_idx, XNFLD_REC_VALUE, result);
+
+    xnpgr_unpin(db->pager, page);
     return xnstatus_create(true, NULL);
 }
 
-struct xnstatus xndb_delete(struct xndb *db, const char *key) {
-    assert(strlen(key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
+struct xnstatus xndb_delete(struct xndb *db, const char *raw_key) {
+    assert(strlen(raw_key) < XN_RECKEY_SZ && "key length is larger than XN_RECKEY_SZ");
 
-    int block_idx = xndb_get_block_idx(key);
-    int idx = xndb_find_idx(db, block_idx, key);
-    if (idx == -1)
+    //prepare inputs
+    struct xnkey key;
+    memset(&key, 0, XN_RECKEY_SZ);
+    memcpy(&key, raw_key, strlen(raw_key) + 1);
+
+    int block_idx = xndb_get_block_idx((char*)&key);
+    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+    int rec_idx = xnpg_find_rec_idx(page, (char*)&key);
+    if (rec_idx == -1) {
+        xnpgr_unpin(db->pager, page);
         return xnstatus_create(false, "xenondb: key not found");
+    }
 
-    int fd = xn_open(db->data_path, O_RDWR, 0666);
-    xndb_write_valid(fd, block_idx, idx, false);
-    xndb_add_to_freelist(fd, block_idx, idx);
-    close(fd);
+    bool valid = false;
+    xnpg_write_rec_field(page, rec_idx, XNFLD_REC_VALID, &valid);
+    xndb_add_to_freelist(db, block_idx, rec_idx);
 
+    xnpgr_unpin(db->pager, page);
     return xnstatus_create(true, NULL);
 }
 
@@ -382,37 +479,42 @@ void xniter_reset(struct xndb *db) {
 bool xniter_next(struct xndb *db) {
     int fd = xn_open(db->data_path, O_RDWR, 0666);
 
-    int rec_count = xndb_read_rec_count(fd, db->iter_block_idx);
+    struct xnpg *page = xnpgr_pin(db->pager, db->iter_block_idx);
+    int rec_count;
+    xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
 
     while (true) {
         db->iter_rec_idx++;
         if (db->iter_rec_idx >= rec_count) {
             db->iter_block_idx++;
             if (db->iter_block_idx > XN_BUCKETS) {
-                close(fd);
+                xnpgr_unpin(db->pager, page);
                 return false;
             }
-            rec_count = xndb_read_rec_count(fd, db->iter_block_idx);
+            xnpgr_unpin(db->pager, page);
+            page = xnpgr_pin(db->pager, db->iter_block_idx);
+            xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
             db->iter_rec_idx = -1;
             continue;
         }
 
-        if (xndb_read_valid(fd, db->iter_block_idx, db->iter_rec_idx)) {
-            close(fd);
+        bool valid;
+        xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_VALID, &valid);
+        if (valid) {
+            xnpgr_unpin(db->pager, page);
             return true;
         }
     }
 
-    close(fd);
-
+    xnpgr_unpin(db->pager, page);
     return false;
 }
 
 void xniter_read_key_value(struct xndb *db, struct xnkey *key, struct xnvalue *value) {
-    int fd = xn_open(db->data_path, O_RDWR, 0666);
-    xndb_read_key(fd, db->iter_block_idx, db->iter_rec_idx, key);
-    xndb_read_value(fd, db->iter_block_idx, db->iter_rec_idx, value);
-    close(fd);
+    struct xnpg *page = xnpgr_pin(db->pager, db->iter_block_idx);
+    xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_KEY, key);
+    xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_VALUE, value);
+    xnpgr_unpin(db->pager, page);
 }
 
 void put_test() {
@@ -421,10 +523,13 @@ void put_test() {
     struct xnstatus status;
     status = xndb_put(db, "cat", "a");
     assert(status.ok && "put 1 failed");
+
     status = xndb_put(db, "dog", "b");
     assert(status.ok && "put 2 failed");
+
     status = xndb_put(db, "whale", "c");
     assert(status.ok && "put 3 failed");
+
     status = xndb_put(db, "whale", "d");
     assert(status.ok && "put on existing key failed");
 
@@ -481,7 +586,6 @@ void delete_test() {
 
     printf("delete_test passed\n");
 }
-
 
 void iterate_test() {
     struct xndb* db = xndb_init("students", true);
