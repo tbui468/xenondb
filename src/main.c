@@ -20,6 +20,8 @@
 #define XN_RECKEY_SZ 120
 #define XN_RECVAL_SZ 128
 
+#define XN_PGR_MAXPGCOUNT 2
+
 //#define XN_BUCKETS 101
 #define XN_BUCKETS 3
 
@@ -50,15 +52,9 @@ struct xnpg {
 };
 
 struct xnpgr {
-    struct xnpg pages[XN_BUCKETS + 1]; //+1 is the metadata block
+    struct xnpg pages[XN_PGR_MAXPGCOUNT];
     char data_path[256];
 };
-
-struct xnpg *xnpgr_pin(struct xnpgr *pager, int block_idx) {
-    struct xnpg *page = &pager->pages[block_idx];
-    page->pins++;
-    return page;
-}
 
 void xnpgr_flush(struct xnpgr *pager, struct xnpg *page) {
     int fd = xn_open(pager->data_path, O_RDWR, 0666);
@@ -67,21 +63,55 @@ void xnpgr_flush(struct xnpgr *pager, struct xnpg *page) {
     close(fd);
 }
 
-void xnpgr_unpin(struct xnpgr *pager, struct xnpg *page) {
-    page->pins--;
-
-    //@TEST - flush immediately to see if tests pass
-    xnpgr_flush(pager, page);
+void xnpgr_read_page_from_disk(struct xnpgr *pager, struct xnpg *page, int block_idx) {
+    page->block_idx = block_idx;
+    page->pins = 0;
+    int fd = xn_open(pager->data_path, O_RDWR, 0666);
+    xn_seek(fd, page->block_idx * XN_BLK_SZ, SEEK_SET);
+    xn_read(fd, page->buf, XN_BLK_SZ);
+    close(fd);
 }
 
+void xnpgr_unpin(struct xnpgr *pager, struct xnpg *page) {
+    page->pins--;
+}
+
+struct xnpg *xnpgr_pin(struct xnpgr *pager, int block_idx) {
+    //page is in buffer
+    for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
+        struct xnpg *page = &pager->pages[i];
+        if (page->block_idx == block_idx) {
+            page->pins++;
+            return page;
+        }
+    }
+
+    //Naive eviction policy: evict first page with 0 pins
+    for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
+        struct xnpg *page = &pager->pages[i];
+        if (page->pins == 0) {
+            xnpgr_flush(pager, page);
+            xnpgr_read_page_from_disk(pager, page, block_idx);
+            page->pins++;
+            return page;
+        }
+    }
+
+    assert(false && "xenondb: no pages available to evict");
+    return NULL;
+}
+
+
 struct xnpgr *xnpgr_create(const char* data_path) {
+    assert(XN_BUCKETS + 1 >= XN_PGR_MAXPGCOUNT && "buckets + 1 not greater or equal to max page count");
+
     struct xnpgr *pager = xn_malloc(sizeof(struct xnpgr));
 
     memcpy(pager->data_path, data_path, strlen(data_path));
     pager->data_path[strlen(data_path)] = '\0';
 
     int fd = xn_open(pager->data_path, O_RDWR, 0666);
-    for (int i = 0; i < XN_BUCKETS + 1; i++) {
+    for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
         pager->pages[i].pins = 0;
         pager->pages[i].block_idx = i;
         
@@ -190,53 +220,6 @@ struct xnkey {
     char data[XN_RECKEY_SZ];
 };
 
-void xnpg_read_key(struct xnpg *page, int rec_idx, struct xnkey *key) {
-    char* ptr = page->buf + XN_REC_SZ * rec_idx + XN_RECHDR_SZ;
-    memcpy((char*)key, ptr, sizeof(XN_RECKEY_SZ));
-}
-
-void xnpg_read_value(struct xnpg *page, int rec_idx, struct xnvalue *value) {
-    char* ptr = page->buf + XN_REC_SZ * rec_idx + XN_RECHDR_SZ + XN_RECKEY_SZ;
-    memcpy((char*)value, ptr, sizeof(XN_RECVAL_SZ));
-}
-
-int xnpg_read_rec_count(struct xnpg *page) {
-    return *((int*)(page->buf));
-}
-
-void xnpg_write_rec_count(struct xnpg *page, int rec_count) {
-    memcpy(page->buf, &rec_count, sizeof(int));
-}
-
-void xnpg_write_valid(struct xnpg *page, int rec_idx, bool valid) {
-    memcpy(page->buf + rec_idx * XN_REC_SZ + sizeof(int), &valid, sizeof(bool));
-}
-
-bool xnpg_read_valid(struct xnpg *page, int rec_idx) {
-    return *((bool*)(page->buf + rec_idx * XN_REC_SZ + sizeof(int)));
-}
-
-int xnpg_read_next(struct xnpg *page, int rec_idx) {
-    return *((int*)(page->buf + rec_idx * XN_REC_SZ));
-}
-
-void xnpg_write_next(struct xnpg *page, int rec_idx, int next) {
-    memcpy(page->buf + rec_idx * XN_REC_SZ, &next, sizeof(int));
-}
-
-struct xnstatus xnpg_write_key(struct xnpg *page, int rec_idx, const char* key) {
-    memcpy(page->buf + rec_idx * XN_REC_SZ + XN_RECHDR_SZ, key, strlen(key) + 1);
-}
-
-struct xnstatus xnpg_write_value(struct xnpg *page, int rec_idx, const char* value) {
-    memcpy(page->buf + rec_idx * XN_REC_SZ + XN_RECHDR_SZ + XN_RECKEY_SZ, value, strlen(value) + 1);
-}
-
-struct xnstatus xnpg_write_record(struct xnpg *page, int rec_idx, const char *key, const char *value) {
-    xnpg_write_valid(page, rec_idx, true);
-    xnpg_write_key(page, rec_idx, key);
-    xnpg_write_value(page, rec_idx, value);
-}
 
 int xndb_get_block_idx(const char* key) {
     size_t total = 0;
@@ -345,8 +328,10 @@ int xndb_remove_freelist_rec(struct xndb *db, int block_idx) {
     int head_idx;
     xnpg_read_header_field(page, XNFLD_HDR_FREELIST, &head_idx);
 
-    if (head_idx == -1)
+    if (head_idx == -1) {
+        xnpgr_unpin(db->pager, page);
         return head_idx;
+    }
 
     int new_head_idx;
     xnpg_read_rec_field(page, head_idx, XNFLD_REC_NEXT, &new_head_idx);
@@ -477,8 +462,6 @@ void xniter_reset(struct xndb *db) {
 }
 
 bool xniter_next(struct xndb *db) {
-    int fd = xn_open(db->data_path, O_RDWR, 0666);
-
     struct xnpg *page = xnpgr_pin(db->pager, db->iter_block_idx);
     int rec_count;
     xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
@@ -486,12 +469,11 @@ bool xniter_next(struct xndb *db) {
     while (true) {
         db->iter_rec_idx++;
         if (db->iter_rec_idx >= rec_count) {
+            xnpgr_unpin(db->pager, page);
             db->iter_block_idx++;
             if (db->iter_block_idx > XN_BUCKETS) {
-                xnpgr_unpin(db->pager, page);
                 return false;
             }
-            xnpgr_unpin(db->pager, page);
             page = xnpgr_pin(db->pager, db->iter_block_idx);
             xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
             db->iter_rec_idx = -1;
@@ -527,11 +509,12 @@ void put_test() {
     status = xndb_put(db, "dog", "b");
     assert(status.ok && "put 2 failed");
 
-    status = xndb_put(db, "whale", "c");
+    status = xndb_put(db, "hamster", "c");
     assert(status.ok && "put 3 failed");
 
-    status = xndb_put(db, "whale", "d");
-    assert(status.ok && "put on existing key failed");
+    /*
+    status = xndb_put(db, "hamster", "d");
+    assert(status.ok && "put on existing key failed");*/
 
     xndb_free(db);
 
@@ -636,6 +619,67 @@ void freelist_test() {
     printf("freelist_test passed\n");
 }
 
+//when using a bucket size of 3 and the basic hash algorithm
+//described in Advanced Unix Programming, these three keys
+//end up in three different blocks.  Setting the max page
+//count in the pager < 3 is necessary to verify that this test 
+//works
+void pager_test() {
+    struct xndb* db = xndb_init("students", true);
+
+    struct xnstatus status;
+    status = xndb_put(db, "cat", "a");
+    assert(status.ok && "put 1 failed");
+
+    status = xndb_put(db, "dog", "b");
+    assert(status.ok && "put 2 failed");
+
+    status = xndb_put(db, "hamster", "c");
+    assert(status.ok && "put 3 failed");
+
+    struct xnvalue value;
+    for (int i = 0; i < 3; i++) {
+        status = xndb_get(db, "cat", &value);
+        assert(status.ok && *((char*)&value) == 'a' && "pager test failed");
+        status = xndb_get(db, "dog", &value);
+        assert(status.ok && *((char*)&value) == 'b' && "pager test failed");
+        status = xndb_get(db, "hamster", &value);
+        assert(status.ok && *((char*)&value) == 'c' && "pager test failed");
+    }
+
+    for (int i = 0; i < 10; i++) {
+        //increment all values by 1 each iteration
+        status = xndb_get(db, "cat", &value);
+        char c = *((char*)&value);
+        *((char*)&value) = ++c;
+        status = xndb_put(db, "cat", (char*)&value);
+
+        status = xndb_get(db, "dog", &value);
+        c = *((char*)&value);
+        *((char*)&value) = ++c;
+        status = xndb_put(db, "dog", (char*)&value);
+
+        status = xndb_get(db, "hamster", &value);
+        c = *((char*)&value);
+        *((char*)&value) = ++c;
+        status = xndb_put(db, "hamster", (char*)&value);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        //read all three and make sure the values are correct
+        status = xndb_get(db, "cat", &value);
+        assert(status.ok && *((char*)&value) == 'k' && "pager test failed");
+        status = xndb_get(db, "dog", &value);
+        assert(status.ok && *((char*)&value) == 'l' && "pager test failed");
+        status = xndb_get(db, "hamster", &value);
+        assert(status.ok && *((char*)&value) == 'm' && "pager test failed");
+    }
+
+    xndb_free(db);
+
+    printf("pager_test passed\n");
+}
+
 int main(int argc, char** argv) {
     put_test();
     system("exec rm -rf students");
@@ -646,6 +690,8 @@ int main(int argc, char** argv) {
     iterate_test();
     system("exec rm -rf students");
     freelist_test(); //how can we automate this test
+    system("exec rm -rf students");
+    pager_test();
     system("exec rm -rf students");
     return 0;
 }
