@@ -179,11 +179,8 @@ struct xndb* xndb_init(char* path, bool make_dir) {
 
     int fd = xn_open(db->data_path, O_CREAT | O_RDWR, 0666);
 
-    //write meta block
     char buf[XN_BLK_SZ];
     memset(buf, 0, XN_BLK_SZ);
-
-    xn_write(fd, buf, XN_BLK_SZ);
 
     //write remaining buckets (with next set to -1)
     int freelist = -1;
@@ -227,7 +224,7 @@ int xndb_get_block_idx(const char* key) {
         total += (i + 1) * key[i];
     }
 
-    return total % XN_BUCKETS + 1;
+    return total % XN_BUCKETS;
 }
 
 void xnpg_write_header_field(struct xnpg *page, enum xnfld fld, void* value) {
@@ -457,7 +454,7 @@ struct xnstatus xndb_delete(struct xndb *db, const char *raw_key) {
 }
 
 void xniter_reset(struct xndb *db) {
-    db->iter_block_idx = 1; //first index block
+    db->iter_block_idx = 0; //first index block
     db->iter_rec_idx = -1; //one before first record
 }
 
@@ -471,7 +468,7 @@ bool xniter_next(struct xndb *db) {
         if (db->iter_rec_idx >= rec_count) {
             xnpgr_unpin(db->pager, page);
             db->iter_block_idx++;
-            if (db->iter_block_idx > XN_BUCKETS) {
+            if (db->iter_block_idx >= XN_BUCKETS) {
                 return false;
             }
             page = xnpgr_pin(db->pager, db->iter_block_idx);
