@@ -26,6 +26,13 @@ struct xnstatus {
     char* msg;
 };
 
+enum xnlog {
+    XNLOG_START,
+    XNLOG_COMMIT,
+    XNLOG_ROLLBACK,
+    XLNOG_WRITE
+};
+
 enum xnfld {
     XNFLD_HDR_PTRCOUNT,
     XNFLD_HDR_SLTSTOP,
@@ -39,14 +46,10 @@ enum xnfld {
     XNFLD_SLT_VALUE
 };
 
-
-
 //xenon db
 struct xndb {
     char dir_path[256];
     char data_path[256];
-    int iter_block_idx;
-    int iter_rec_idx;
     struct xnpgr *pager;
 };
 
@@ -54,10 +57,12 @@ struct xnpg {
     char buf[XN_BLK_SZ];
     int pins;
     int block_idx;
+
+    //fields used to search freelist for a slot
+    //should really be moved elsewhere
     int16_t cur;
     int16_t prev;
 };
-
 
 struct xnpgr {
     struct xnpg pages[XN_PGR_MAXPGCOUNT];
@@ -70,6 +75,19 @@ struct xnitr {
     struct xnpgr *pager;
 };
 
+struct xntx {
+    int id;
+    struct xnpgr *pager;
+};
+
+void xndb_init_tx(struct xndb *db, struct xntx *tx);
+struct xnstatus xntx_commit(struct xntx *tx);
+struct xnstatus xntx_rollback(struct xntx *tx);
+struct xnstatus xntx_put(struct xntx *tx, const char *key, const char *value);
+struct xnstatus xntx_get(struct xntx *tx, const char *key, char *value);
+struct xnstatus xntx_delete(struct xntx *tx, const char *key);
+
+struct xnstatus xnpg_delete(struct xnpg *page, const char *key);
 struct xnstatus xndb_delete(struct xndb *db, const char *key);
 void xnpg_write(struct xnpg *page, int16_t off, const void *data, size_t size);
 void xnpg_read(struct xnpg *page, int16_t off, void *data, size_t size);
@@ -358,21 +376,17 @@ int16_t xnpg_remove_freeslot(struct xnpg *page) {
 //searches for a free slot of exact size in freelist
 //if found, removes slot from freelist and returns offset
 //otherwise returns -1
-int16_t xndb_get_freeslot_offset(struct xndb *db, const char *key, const char *value) {
-    int block_idx = xndb_get_hash_bucket(key);
-    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+int16_t xnpg_get_freeslot_offset(struct xnpg *page, const char *key, const char *value) {
     int16_t target_size = strlen(key) + strlen(value);
 
     xnpg_init_freeslot_search(page);
     while (xnpg_next_freeslot(page)) {
         if (xnpg_freeslot_size(page) == target_size) {
             int16_t offset = xnpg_remove_freeslot(page);
-            xnpgr_unpin(db->pager, page);
             return offset;
         }
     }
 
-    xnpgr_unpin(db->pager, page);
     return -1;
 }
 
@@ -387,12 +401,7 @@ void xnpg_write_record(struct xnpg *page, int16_t idx, const char *key, const ch
     xnpg_write(page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, idx), value, valsz);
 }
 
-//this should really be a tx function
-struct xnstatus xndb_put(struct xndb *db, const char *key, const char *value) {
-    //TODO assert that key/value will fit into a single block
-
-    int block_idx = xndb_get_hash_bucket(key);
-    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+struct xnstatus xnpg_put(struct xnpg *page, const char *key, const char *value) {
     int rec_idx = xnpg_find_rec_idx(page, key);
 
     if (rec_idx != -1) {
@@ -400,16 +409,17 @@ struct xnstatus xndb_put(struct xndb *db, const char *key, const char *value) {
         xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, rec_idx), &old_valsz, sizeof(int16_t));
         if (strlen(value) == old_valsz) {
             xnpg_write(page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, rec_idx), value, old_valsz);
-            xnpgr_unpin(db->pager, page);
             return xnstatus_create(true, NULL);
         }
 
         //if size is not the same, delete record
         //the remaining code in function will add a new record with the proper size
-        xndb_delete(db, key);
+        struct xnstatus s = xnpg_delete(page, key);
+        if (!s.ok)
+            return s;
     }
 
-    int16_t free_offset = xndb_get_freeslot_offset(db, key, value);
+    int16_t free_offset = xnpg_get_freeslot_offset(page, key, value);
     int16_t rec_count;
     xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
 
@@ -429,20 +439,29 @@ struct xnstatus xndb_put(struct xndb *db, const char *key, const char *value) {
 
     rec_count++;
     xnpg_write(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
-
-    xnpgr_unpin(db->pager, page);
     return xnstatus_create(true, NULL);
 }
 
-struct xnstatus xndb_get(struct xndb *db, const char *key, char* result) {
-    //TODO assert that key fits into a single block
+struct xnstatus xndb_put(struct xndb *db, const char *key, const char *value) {
+    //TODO assert that key/value will fit into a single block
 
-    int block_idx = xndb_get_hash_bucket(key);
-    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+    struct xntx tx;
+    xndb_init_tx(db, &tx); 
+    struct xnstatus s = xntx_put(&tx, key, value);
+    if (s.ok) {
+        xntx_commit(&tx);
+    } else {
+        xntx_rollback(&tx);
+    }
+
+    return s;
+}
+
+
+struct xnstatus xnpg_get(struct xnpg *page, const char *key, char* result) {
     int rec_idx = xnpg_find_rec_idx(page, key);
 
     if (rec_idx == -1) {
-        xnpgr_unpin(db->pager, page);
         return xnstatus_create(false, "xenondb: key not found");
     }
 
@@ -450,19 +469,26 @@ struct xnstatus xndb_get(struct xndb *db, const char *key, char* result) {
     xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, rec_idx), &valsz, sizeof(int16_t));
     xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, rec_idx), result, valsz);
     result[valsz] = '\0';
-
-    xnpgr_unpin(db->pager, page);
     return xnstatus_create(true, NULL);
 }
 
-struct xnstatus xndb_delete(struct xndb *db, const char *key) {
-    //TODO assert key will fit into a single block
+struct xnstatus xndb_get(struct xndb *db, const char *key, char* result) {
+    //TODO assert that key fits into a single block
+    struct xntx tx;
+    xndb_init_tx(db, &tx); 
+    struct xnstatus s = xntx_get(&tx, key, result);
+    if (s.ok) {
+        xntx_commit(&tx);
+    } else {
+        xntx_rollback(&tx);
+    }
 
-    int block_idx = xndb_get_hash_bucket(key);
-    struct xnpg *page = xnpgr_pin(db->pager, block_idx);
+    return s;
+}
+
+struct xnstatus xnpg_delete(struct xnpg *page, const char *key) {
     int rec_idx = xnpg_find_rec_idx(page, key);
     if (rec_idx == -1) {
-        xnpgr_unpin(db->pager, page);
         return xnstatus_create(false, "xenondb: key not found");
     }
 
@@ -491,9 +517,22 @@ struct xnstatus xndb_delete(struct xndb *db, const char *key) {
 
     ptr_count--;
     xnpg_write(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &ptr_count, sizeof(int16_t));
-
-    xnpgr_unpin(db->pager, page);
     return xnstatus_create(true, NULL);
+}
+
+struct xnstatus xndb_delete(struct xndb *db, const char *key) {
+    //TODO assert key will fit into a single block
+   
+    struct xntx tx;
+    xndb_init_tx(db, &tx); 
+    struct xnstatus s = xntx_delete(&tx, key);
+    if (s.ok) {
+        xntx_commit(&tx);
+    } else {
+        xntx_rollback(&tx);
+    }
+
+    return s;
 }
 
 void xndb_init_itr(struct xndb *db, struct xnitr *itr) {
@@ -541,6 +580,55 @@ void xnitr_read_value(struct xnitr *itr, char *value) {
     xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, itr->rec_idx), &valsz, sizeof(int16_t));
     xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, itr->rec_idx), value, valsz);
     xnpgr_unpin(itr->pager, page);
+}
+
+
+void xndb_init_tx(struct xndb *db, struct xntx *tx) {
+    tx->id = 0; //TODO tx_id is set to 0 for now.  store tx counter in header of file and use that to give each tx a unique id
+    tx->pager = db->pager;
+    //tx->logger = db->logger;
+    //xnlog_write(db->logger, XNLOG_START);
+}
+
+struct xnstatus xntx_commit(struct xntx *tx) {
+    //TODO what should happen here?
+    //xnlog_write(tx->logger, XNLOG_COMMIT);
+    return xnstatus_create(true, NULL);
+}
+
+struct xnstatus xntx_rollback(struct xntx *tx) {
+    //TODO what should happen here?
+    //go through log and undo all changes in this tx???
+    //xnlog_write(tx->logger, XNLOG_ROLLBACK);
+    return xnstatus_create(true, NULL);
+}
+
+struct xnstatus xntx_put(struct xntx *tx, const char *key, const char *value) {
+    int block_idx = xndb_get_hash_bucket(key);
+    struct xnpg *page = xnpgr_pin(tx->pager, block_idx);
+    //TODO write to log here
+    struct xnstatus s;
+    s = xnpg_put(page, key, value);
+    xnpgr_unpin(tx->pager, page);
+    return s;
+}
+struct xnstatus xntx_get(struct xntx *tx, const char *key, char *value) {
+    int block_idx = xndb_get_hash_bucket(key);
+    struct xnpg *page = xnpgr_pin(tx->pager, block_idx);
+    //TODO write to log here??
+    struct xnstatus s;
+    s = xnpg_get(page, key, value);
+    xnpgr_unpin(tx->pager, page);
+    return s;
+}
+struct xnstatus xntx_delete(struct xntx *tx, const char *key) {
+    int block_idx = xndb_get_hash_bucket(key);
+    struct xnpg *page = xnpgr_pin(tx->pager, block_idx);
+    //TODO write to log here
+    struct xnstatus s;
+    s = xnpg_delete(page, key);
+    xnpgr_unpin(tx->pager, page);
+    return s;
 }
 
 void basic_put_test() {
@@ -747,6 +835,34 @@ void pager_test() {
     printf("pager_test passed\n");
 }
 
+
+void tx_test() {
+    struct xndb* db = xndb_init("students", true);
+    struct xnstatus s;
+    /*
+
+    struct xntx tx;
+    xndb_init_tx(db, &tx);
+    xntx_put(&tx, "cat", "a");
+    xntx_commit(&tx);*/
+
+    /*
+    char value[2];
+    s = xndb_get(db, "cat", value);
+    assert(s.ok && strcmp(value, "a") == 0 && "tx test failed");
+
+    struct xntx tx2;
+    xndb_init_tx(db, &tx2);
+    xntx_put(tx2, "dog", "a");
+    xntx_rollback(tx2);
+    s = xndb_get(db, "dog", value);
+    assert(!s.ok && "tx test failed");*/
+
+    xndb_free(db);
+
+    printf("tx_test passed\n");
+}
+
 int main(int argc, char** argv) {
     basic_put_test();
     system("exec rm -rf students");
@@ -759,6 +875,8 @@ int main(int argc, char** argv) {
     iterate_test();
     system("exec rm -rf students");
     pager_test();
+    system("exec rm -rf students");
+    tx_test();
     system("exec rm -rf students");
     return 0;
 }
