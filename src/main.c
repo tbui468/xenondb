@@ -64,7 +64,11 @@ struct xnpgr {
     char data_path[256];
 };
 
-
+struct xnitr {
+    int block_idx;
+    int rec_idx;
+    struct xnpgr *pager;
+};
 
 struct xnstatus xndb_delete(struct xndb *db, const char *key);
 void xnpg_write(struct xnpg *page, int16_t off, const void *data, size_t size);
@@ -492,49 +496,52 @@ struct xnstatus xndb_delete(struct xndb *db, const char *key) {
     return xnstatus_create(true, NULL);
 }
 
-/*
-void xniter_reset(struct xndb *db) {
-    db->iter_block_idx = 0; //first index block
-    db->iter_rec_idx = -1; //one before first record
+void xndb_init_itr(struct xndb *db, struct xnitr *itr) {
+    itr->block_idx = 0;
+    itr->rec_idx = -1;
+    itr->pager = db->pager;
 }
 
-bool xniter_next(struct xndb *db) {
-    struct xnpg *page = xnpgr_pin(db->pager, db->iter_block_idx);
-    int rec_count;
-    xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
+bool xnitr_next(struct xnitr *itr) {
+    struct xnpg *page = xnpgr_pin(itr->pager, itr->block_idx);
+    int16_t rec_count;
+    xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
 
     while (true) {
-        db->iter_rec_idx++;
-        if (db->iter_rec_idx >= rec_count) {
-            xnpgr_unpin(db->pager, page);
-            db->iter_block_idx++;
-            if (db->iter_block_idx >= XN_BUCKETS) {
+        itr->rec_idx++;
+        if (itr->rec_idx >= rec_count) {
+            xnpgr_unpin(itr->pager, page);
+            itr->block_idx++;
+            if (itr->block_idx >= XN_BUCKETS) {
                 return false;
             }
-            page = xnpgr_pin(db->pager, db->iter_block_idx);
-            xnpg_read_header_field(page, XNFLD_HDR_RECCOUNT, &rec_count);
-            db->iter_rec_idx = -1;
+            page = xnpgr_pin(itr->pager, itr->block_idx);
+            xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
+            itr->rec_idx = -1;
             continue;
         }
-
-        bool valid;
-        xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_VALID, &valid);
-        if (valid) {
-            xnpgr_unpin(db->pager, page);
-            return true;
-        }
+        return true;
     }
 
-    xnpgr_unpin(db->pager, page);
+    xnpgr_unpin(itr->pager, page);
     return false;
 }
 
-void xniter_read_key_value(struct xndb *db, struct xnkey *key, struct xnvalue *value) {
-    struct xnpg *page = xnpgr_pin(db->pager, db->iter_block_idx);
-    xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_KEY, key);
-    xnpg_read_rec_field(page, db->iter_rec_idx, XNFLD_REC_VALUE, value);
-    xnpgr_unpin(db->pager, page);
-}*/
+void xnitr_read_key(struct xnitr *itr, char *key) {
+    struct xnpg *page = xnpgr_pin(itr->pager, itr->block_idx);
+    int16_t keysz;
+    xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_KEYSZ, itr->rec_idx), &keysz, sizeof(int16_t));
+    xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_KEY, itr->rec_idx), key, keysz);
+    xnpgr_unpin(itr->pager, page);
+}
+
+void xnitr_read_value(struct xnitr *itr, char *value) {
+    struct xnpg *page = xnpgr_pin(itr->pager, itr->block_idx);
+    int16_t valsz;
+    xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, itr->rec_idx), &valsz, sizeof(int16_t));
+    xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, itr->rec_idx), value, valsz);
+    xnpgr_unpin(itr->pager, page);
+}
 
 void basic_put_test() {
     struct xndb* db = xndb_init("students", true);
@@ -649,55 +656,6 @@ void put_test() {
     printf("put_test passed\n");
 }
 
-/*
-void get_test() {
-    struct xndb* db = xndb_init("students", true);
-
-    struct xnstatus status;
-    status = xndb_put(db, "cat", "a");
-    assert(status.ok && "put 1 failed");
-    status = xndb_put(db, "dog", "b");
-    assert(status.ok && "put 2 failed");
-    status = xndb_put(db, "whale", "c");
-    assert(status.ok && "put 3 failed");
-    status = xndb_put(db, "whale", "d");
-    assert(status.ok && "put on existing key failed");
-
-    struct xnvalue value;
-    status = xndb_get(db, "cat", &value);
-    assert(status.ok && strcmp((char*)&value, "a") == 0 && "get 1 failed");
-
-    status = xndb_get(db, "dog", &value);
-    assert(status.ok && strcmp((char*)&value, "b") == 0 && "get 2 failed");
-
-    status = xndb_get(db, "whale", &value);
-    assert(status.ok && strcmp((char*)&value, "d") == 0 && "get on replaced value failed");
-
-    xndb_free(db);
-
-    printf("get_test passed\n");
-}
-
-void delete_test() {
-    struct xndb* db = xndb_init("students", true);
-
-    struct xnstatus status;
-    status = xndb_put(db, "cat", "a");
-    status = xndb_put(db, "dog", "b");
-    status = xndb_delete(db, "cat");
-    assert(status.ok && "delete 1 failed");
-
-    struct xnvalue value;
-    status = xndb_get(db, "cat", &value);
-    assert(!status.ok && "delete 2 failed");
-
-    status = xndb_get(db, "dog", &value);
-    assert(status.ok && strcmp((char*)&value, "b") == 0 && "delete 3 failed");
-
-    xndb_free(db);
-
-    printf("delete_test passed\n");
-}
 
 void iterate_test() {
     struct xndb* db = xndb_init("students", true);
@@ -710,13 +668,15 @@ void iterate_test() {
     status = xndb_delete(db, "bird");
     status = xndb_put(db, "ant", "e");
 
-    xniter_reset(db);
+    struct xnitr itr;
+    xndb_init_itr(db, &itr);
 
-    struct xnkey key;
-    struct xnvalue value;
+    char key[5];
+    char value[2];
     int count = 0;
-    while (xniter_next(db)) {
-        xniter_read_key_value(db, &key, &value);
+    while (xnitr_next(&itr)) {
+        xnitr_read_key(&itr, key);
+        xnitr_read_value(&itr, value);
         count++;
     }
 
@@ -725,27 +685,6 @@ void iterate_test() {
     xndb_free(db);
 
     printf("iterate_test passed\n");
-}
-
-//Note: this test passes if only a single key/value pair is in database (old record is replaced)
-void freelist_test() {
-    struct xndb* db = xndb_init("students", true);
-
-    struct xnstatus status;
-    char buf[3];
-    buf[0] = 0x01;
-    buf[1] = 0x20;
-    buf[2] = '\0';
-
-    status = xndb_put(db, buf, "first"); //ascii 65 (+1, so block 66)
-    status = xndb_delete(db, buf);
-
-    status = xndb_put(db, "A", "second"); //ascii 65 (+1, so block 66)
-    status = xndb_delete(db, "A");
-
-    xndb_free(db);
-
-    printf("freelist_test passed\n");
 }
 
 //when using a bucket size of 3 and the basic hash algorithm
@@ -765,49 +704,48 @@ void pager_test() {
 
     status = xndb_put(db, "hamster", "c");
     assert(status.ok && "put 3 failed");
-
-    struct xnvalue value;
+    char value[2];
     for (int i = 0; i < 3; i++) {
-        status = xndb_get(db, "cat", &value);
-        assert(status.ok && *((char*)&value) == 'a' && "pager test failed");
-        status = xndb_get(db, "dog", &value);
-        assert(status.ok && *((char*)&value) == 'b' && "pager test failed");
-        status = xndb_get(db, "hamster", &value);
-        assert(status.ok && *((char*)&value) == 'c' && "pager test failed");
+        status = xndb_get(db, "cat", value);
+        assert(status.ok && *value == 'a' && "pager test failed");
+        status = xndb_get(db, "dog", value);
+        assert(status.ok && *value == 'b' && "pager test failed");
+        status = xndb_get(db, "hamster", value);
+        assert(status.ok && *value == 'c' && "pager test failed");
     }
 
     for (int i = 0; i < 10; i++) {
         //increment all values by 1 each iteration
-        status = xndb_get(db, "cat", &value);
-        char c = *((char*)&value);
-        *((char*)&value) = ++c;
-        status = xndb_put(db, "cat", (char*)&value);
+        status = xndb_get(db, "cat", value);
+        char c = *value;
+        *value = ++c;
+        status = xndb_put(db, "cat", value);
 
-        status = xndb_get(db, "dog", &value);
-        c = *((char*)&value);
-        *((char*)&value) = ++c;
-        status = xndb_put(db, "dog", (char*)&value);
+        status = xndb_get(db, "dog", value);
+        c = *value;
+        *value = ++c;
+        status = xndb_put(db, "dog", value);
 
-        status = xndb_get(db, "hamster", &value);
-        c = *((char*)&value);
-        *((char*)&value) = ++c;
-        status = xndb_put(db, "hamster", (char*)&value);
+        status = xndb_get(db, "hamster", value);
+        c = *value;
+        *value = ++c;
+        status = xndb_put(db, "hamster", value);
     }
 
     for (int i = 0; i < 3; i++) {
         //read all three and make sure the values are correct
-        status = xndb_get(db, "cat", &value);
-        assert(status.ok && *((char*)&value) == 'k' && "pager test failed");
-        status = xndb_get(db, "dog", &value);
-        assert(status.ok && *((char*)&value) == 'l' && "pager test failed");
-        status = xndb_get(db, "hamster", &value);
-        assert(status.ok && *((char*)&value) == 'm' && "pager test failed");
+        status = xndb_get(db, "cat", value);
+        assert(status.ok && *value == 'k' && "pager test failed");
+        status = xndb_get(db, "dog", value);
+        assert(status.ok && *value == 'l' && "pager test failed");
+        status = xndb_get(db, "hamster", value);
+        assert(status.ok && *value == 'm' && "pager test failed");
     }
 
     xndb_free(db);
 
     printf("pager_test passed\n");
-}*/
+}
 
 int main(int argc, char** argv) {
     basic_put_test();
@@ -818,20 +756,9 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     put_test();
     system("exec rm -rf students");
-
-
-
-
-    //get_test();
-    //system("exec rm -rf students");
-    /*
-    delete_test();
-    system("exec rm -rf students");
     iterate_test();
     system("exec rm -rf students");
-    freelist_test(); //how can we automate this test
-    system("exec rm -rf students");
     pager_test();
-    system("exec rm -rf students");*/
+    system("exec rm -rf students");
     return 0;
 }
