@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <string.h>
 
 void *xn_malloc(size_t size) {
     void *p;
@@ -27,6 +28,8 @@ void xn_write(int fd, const void* buf, size_t count) {
         if (result < 0) {
             if (errno != EINTR) {
                 fprintf(stderr, "xenondb: write failed\n");
+                char *s = strerror(errno);
+                fprintf(stderr, "%s\n", s);
                 exit(1);
             }
         } 
