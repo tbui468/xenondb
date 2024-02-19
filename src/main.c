@@ -121,8 +121,23 @@ struct xnsltitr {
     int slt_idx;
     int slt_count;
     struct xnpg *page;
+};
+
+struct xnblkitr {
+    int block_idx;
+    int block_count;
+};
+
+struct xnitr {
+    struct xnblkitr blkitr;
+    struct xnsltitr sltitr;
+    struct xnpgr *pager;
     const char *filename;
 };
+
+
+void xnpgr_unpin(struct xnpg *page);
+struct xnpg *xnpgr_pin(struct xnpgr *pager, const char* filename, int block_idx);
 
 void xnlog_read(void *result, enum xnlogf fld, char *buf);
 void xnlgr_init_lgrdr(struct xnlgr *logger, struct xnlgrdr *lgrdr);
@@ -156,6 +171,138 @@ bool xnsltitr_prev(struct xnsltitr *itr);
 void xnsltitr_before_begin(struct xnsltitr *itr, struct xnpg *page);
 bool xnsltitr_next(struct xnsltitr *itr);
 int16_t xnsltitr_offset(struct xnsltitr *itr);
+
+int xnrecf_offset(enum xnrecf fld, int rec_off);
+
+int xnfile_block_count(const char *filename) {
+    int fd = xn_open(filename, O_RDWR, 0666);
+    return xn_seek(fd, 0, SEEK_END) / XN_BLK_SZ;
+}
+
+void xnblkitr_after_end(struct xnblkitr *itr, const char *filename) {
+    itr->block_idx = xnfile_block_count(filename);
+    itr->block_count = -1; //not used
+}
+
+bool xnblkitr_prev(struct xnblkitr *itr) {
+    itr->block_idx--;
+    return itr->block_idx >= 0;
+}
+
+void xnblkitr_before_begin(struct xnblkitr *itr, const char *filename) {
+    itr->block_idx = -1;
+    itr->block_count = xnfile_block_count(filename);
+}
+
+bool xnblkitr_next(struct xnblkitr *itr) {
+    itr->block_idx++;
+    return itr->block_idx < itr->block_count;
+}
+
+int xnblkitr_idx(struct xnblkitr *itr) {
+    return itr->block_idx;
+}
+
+void xnitr_before_begin(struct xnitr *itr, struct xnpgr *pager, const char *filename) {
+    itr->pager = pager;
+    itr->filename = filename;
+
+    xnblkitr_before_begin(&itr->blkitr, filename);
+
+    if (xnblkitr_next(&itr->blkitr)) {
+        int block_idx = xnblkitr_idx(&itr->blkitr);
+        struct xnpg *page = xnpgr_pin(pager, filename, block_idx);
+        xnsltitr_before_begin(&itr->sltitr, page);
+        xnpgr_unpin(page);
+    }
+}
+
+bool xnitr_next(struct xnitr *itr) {
+    while (!xnsltitr_next(&itr->sltitr)) {
+        if (!xnblkitr_next(&itr->blkitr)) {
+            return false;
+        }
+
+        int block_idx = xnblkitr_idx(&itr->blkitr);
+        struct xnpg *page = xnpgr_pin(itr->pager, itr->filename, block_idx);
+        xnsltitr_before_begin(&itr->sltitr, page);
+        xnpgr_unpin(page);
+    }
+
+    return true;
+}
+
+void xnitr_after_end(struct xnitr *itr, struct xnpgr *pager, const char *filename) {
+    itr->pager = pager;
+    itr->filename = filename;
+
+    xnblkitr_after_end(&itr->blkitr, filename);
+
+    if (xnblkitr_prev(&itr->blkitr)) {
+        int block_idx = xnblkitr_idx(&itr->blkitr);
+        struct xnpg *page = xnpgr_pin(pager, filename, block_idx);
+        xnsltitr_after_end(&itr->sltitr, page);
+        xnpgr_unpin(page);
+    }
+}
+
+bool xnitr_prev(struct xnitr *itr) {
+    while (!xnsltitr_prev(&itr->sltitr)) {
+        if (!xnblkitr_prev(&itr->blkitr)) {
+            return false;
+        }
+
+        int block_idx = xnblkitr_idx(&itr->blkitr);
+        struct xnpg *page = xnpgr_pin(itr->pager, itr->filename, block_idx);
+        xnsltitr_after_end(&itr->sltitr, page);
+        xnpgr_unpin(page);
+    }
+
+    return true;
+}
+
+int xnitr_slotoff(struct xnitr *itr) {
+    return xnsltitr_offset(&itr->sltitr);
+}
+
+int xnitr_blockidx(struct xnitr *itr) {
+    return xnblkitr_idx(&itr->blkitr);
+}
+
+void xndb_itr(struct xndb *db, struct xnitr *itr) {
+    xnitr_before_begin(itr, db->pager, db->data_path);
+}
+
+bool xndb_next(struct xnitr *itr) {
+    return xnitr_next(itr);
+}
+
+void xndb_key(struct xnitr *itr, char *key) {
+    int block_idx = xnblkitr_idx(&itr->blkitr);
+    struct xnpg *page = xnpgr_pin(itr->pager, itr->filename, block_idx);
+
+    int16_t slot_off = xnsltitr_offset(&itr->sltitr);
+    int16_t keysz;
+    xnpg_read(page, xnrecf_offset(XNRECF_KEYSZ, slot_off), &keysz, sizeof(int16_t));
+    xnpg_read(page, xnrecf_offset(XNRECF_KEY, slot_off), key, keysz);
+
+    xnpgr_unpin(page);
+}
+
+void xndb_value(struct xnitr *itr, char *value) {
+    int block_idx = xnblkitr_idx(&itr->blkitr);
+    struct xnpg *page = xnpgr_pin(itr->pager, itr->filename, block_idx);
+
+    int16_t slot_off = xnsltitr_offset(&itr->sltitr);
+    int16_t keysz;
+    xnpg_read(page, xnrecf_offset(XNRECF_KEYSZ, slot_off), &keysz, sizeof(int16_t));
+    int16_t valsz;
+    xnpg_read(page, xnrecf_offset(XNRECF_VALUESZ, slot_off), &valsz, sizeof(int16_t));
+    xnpg_read(page, xnrecf_offset(XNRECF_KEY, slot_off) + keysz, value, valsz);
+
+    xnpgr_unpin(page);
+}
+
 
 int xnrecf_offset(enum xnrecf fld, int rec_off) {
     switch (fld) {
@@ -206,23 +353,6 @@ int xnptrf_offset(enum xnptrf fld, int idx) {
     return XN_BLKHDR_SZ + sizeof(int16_t) * idx;
 }
 
-
-int xnrec_fld_offset(enum xnrecf fld) {
-    switch (fld) {
-    case XNRECF_NEXT:
-        return 0;
-    case XNRECF_KEYSZ:
-        return sizeof(int16_t);
-    case XNRECF_VALUESZ:
-        return sizeof(int16_t) * 2;
-    case XNRECF_KEY:
-        return sizeof(int16_t) * 3;
-    default:
-        assert(false);
-        break;
-    }
-}
-
 void xnpgr_flush(struct xnpg *page) {
     int fd = xn_open(page->filename, O_RDWR, 0666);
     xn_seek(fd, page->block_idx * XN_BLK_SZ, SEEK_SET);
@@ -248,7 +378,7 @@ void xnpgr_read_page_from_disk(struct xnpg *page, const char *filename, int bloc
     close(fd);
 }
 
-void xnpgr_unpin(struct xnpgr *pager, struct xnpg *page) {
+void xnpgr_unpin(struct xnpg *page) {
     page->pins--;
 }
 
@@ -443,8 +573,8 @@ int xnpg_find_rec_idx(struct xnpg *page, const char *key) {
     while (xnsltitr_next(&itr)) {
         int16_t slot_off = xnsltitr_offset(&itr);
         int16_t key_size;
-        xnpg_read(page, slot_off + xnrec_fld_offset(XNRECF_KEYSZ), &key_size, sizeof(int16_t));
-        int16_t key_off = slot_off + xnrec_fld_offset(XNRECF_KEY);
+        xnpg_read(page, xnrecf_offset(XNRECF_KEYSZ, slot_off), &key_size, sizeof(int16_t));
+        int16_t key_off = xnrecf_offset(XNRECF_KEY, slot_off);
         if (strlen(key) == key_size && strncmp(page->buf + key_off, key, key_size) == 0) {
             return itr.slt_idx;
         }
@@ -715,19 +845,44 @@ int16_t xnsltitr_offset(struct xnsltitr *itr) {
 }
 
 struct xnstatus xntx_rollback(struct xntx *tx) {
-    //TODO should make a higher level struct logitr that also iterates through log pages
-    //The log iterator uses the slot iterator (either the forward or reverse iterator)
-    //final usage:
-    //  struct xnlogitr itr;
-    //  xnlogitr_begin(&itr, tx->logger);
-    //  while (xnlogitr_next(&itr)) {
-    //      int16_t off = xnlogitr_log_offset(&iter);
-    //  }
-    //iterate in reverse when reading logs
     xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
-    int cur_block_idx = tx->logger->page.block_idx;
-    while (cur_block_idx > -1) {
-        struct xnpg *page = xnpgr_pin(tx->pager, tx->logger->log_path, cur_block_idx);
+
+    struct xnitr itr;
+    xnitr_after_end(&itr, tx->pager, tx->logger->log_path);
+    while (xnitr_prev(&itr)) {
+        int16_t slot_off = xnitr_slotoff(&itr);
+        int block_idx = xnitr_blockidx(&itr);
+        struct xnpg *page = xnpgr_pin(tx->pager, tx->logger->log_path, block_idx);
+
+        int tx_id;
+        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+        if (tx_id != tx->id) {
+            xnpgr_unpin(page);
+            continue;
+        }
+
+        enum xnlogt type;
+        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+        if (type == XNLOGT_START) {
+            xnpgr_unpin(page);
+            break;
+        }
+
+        if (type != XNLOGT_WRITE) {
+            xnpgr_unpin(page);
+            continue;
+        }
+
+        xntx_undo_write(tx, page->buf + slot_off);
+        xnpgr_unpin(page);
+    }
+
+    /*
+    struct xnblkitr blkitr;
+    xnblkitr_after_end(&blkitr, tx->logger->log_path); //use file size to compute last block idx
+    while (xnblkitr_prev(&blkitr)) {
+        int block_idx = xnblkitr_idx(&blkitr);
+        struct xnpg *page = xnpgr_pin(tx->pager, tx->logger->log_path, block_idx);
 
         struct xnsltitr itr;
         xnsltitr_after_end(&itr, page);
@@ -741,8 +896,8 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
             enum xnlogt type;
             xnlog_read(&type, XNLOGF_TYPE, page->buf + off);
             if (type == XNLOGT_START) {
-                cur_block_idx = -1;
-                break;
+                xnpgr_unpin(page);
+                goto rollback_end;
             }
             if (type != XNLOGT_WRITE)
                 continue;
@@ -750,11 +905,10 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
             xntx_undo_write(tx, page->buf + off);
         }
 
+        xnpgr_unpin(page);
+    }*/
 
-        xnpgr_unpin(tx->pager, page);
-        cur_block_idx--;
-    }
-
+rollback_end:
     xnlgr_write(tx->logger, XNLOGT_ROLLBACK, NULL, tx->id);
     return xnstatus_create(true, NULL);
 }
@@ -765,7 +919,7 @@ struct xnstatus xntx_put(struct xntx *tx, const char *key, const char *value) {
     //eg, xncnr_acquire_xlock(tx->concur, block_idx);
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
     struct xnstatus s = xntx_do_put(tx, page, key, value);
-    xnpgr_unpin(tx->pager, page);
+    xnpgr_unpin(page);
     //TODO release x-lock
     //eg, xncnr_release_xlock(tx->concur, block_idx);
     return s;
@@ -777,7 +931,7 @@ struct xnstatus xntx_get(struct xntx *tx, const char *key, char *value) {
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
     //TODO write to log here??
     struct xnstatus s = xntx_do_get(tx, page, key, value);
-    xnpgr_unpin(tx->pager, page);
+    xnpgr_unpin(page);
     //TODO release s-lock
     return s;
 }
@@ -786,7 +940,7 @@ struct xnstatus xntx_delete(struct xntx *tx, const char *key) {
     //TODO get exclusive lock here using block_idx as lock identifier
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
     struct xnstatus s = xntx_do_delete(tx, page, key);
-    xnpgr_unpin(tx->pager, page);
+    xnpgr_unpin(page);
     //TODO release x-lock
     return s;
 }
@@ -845,7 +999,7 @@ void xntx_redo_write(struct xntx *tx, char *log_buf) {
 
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
     xnpg_write(page, data_off, log_buf + offset, data_size);
-    xnpgr_unpin(tx->pager, page);
+    xnpgr_unpin(page);
 }
 
 void xntx_undo_write(struct xntx *tx, char *log_buf) {
@@ -872,7 +1026,7 @@ void xntx_undo_write(struct xntx *tx, char *log_buf) {
 
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
     xnpg_write(page, data_off, log_buf + offset, data_size);
-    xnpgr_unpin(tx->pager, page);
+    xnpgr_unpin(page);
 }
 
 void xnlog_read(void *result, enum xnlogf fld, char *buf) {
@@ -1073,8 +1227,6 @@ void put_test() {
     printf("put_test passed\n");
 }
 
-/*
-//TODO getting rid of this for now
 void iterate_test() {
     struct xndb* db = xndb_init("students", true);
 
@@ -1087,14 +1239,14 @@ void iterate_test() {
     status = xndb_put(db, "ant", "e");
 
     struct xnitr itr;
-    xndb_init_itr(db, &itr);
+    xndb_itr(db, &itr);
 
     char key[5];
     char value[2];
     int count = 0;
-    while (xnitr_next(&itr)) {
-        xnitr_read_key(&itr, key);
-        xnitr_read_value(&itr, value);
+    while (xndb_next(&itr)) {
+        xndb_key(&itr, key);
+        xndb_value(&itr, value);
         count++;
     }
 
@@ -1103,68 +1255,7 @@ void iterate_test() {
     xndb_free(db);
 
     printf("iterate_test passed\n");
-}*/
-
-//when using a bucket size of 3 and the basic hash algorithm
-//described in Advanced Unix Programming, these three keys
-//end up in three different blocks.  Setting the max page
-//count in the pager < 3 is necessary to verify that this test 
-//works
-void pager_test() {
-    struct xndb* db = xndb_init("students", true);
-
-    struct xnstatus status;
-    status = xndb_put(db, "cat", "a");
-    assert(status.ok && "put 1 failed");
-
-    status = xndb_put(db, "dog", "b");
-    assert(status.ok && "put 2 failed");
-
-    status = xndb_put(db, "hamster", "c");
-    assert(status.ok && "put 3 failed");
-    char value[2];
-    for (int i = 0; i < 3; i++) {
-        status = xndb_get(db, "cat", value);
-        assert(status.ok && *value == 'a' && "pager test failed");
-        status = xndb_get(db, "dog", value);
-        assert(status.ok && *value == 'b' && "pager test failed");
-        status = xndb_get(db, "hamster", value);
-        assert(status.ok && *value == 'c' && "pager test failed");
-    }
-
-    for (int i = 0; i < 10; i++) {
-        //increment all values by 1 each iteration
-        status = xndb_get(db, "cat", value);
-        char c = *value;
-        *value = ++c;
-        status = xndb_put(db, "cat", value);
-
-        status = xndb_get(db, "dog", value);
-        c = *value;
-        *value = ++c;
-        status = xndb_put(db, "dog", value);
-
-        status = xndb_get(db, "hamster", value);
-        c = *value;
-        *value = ++c;
-        status = xndb_put(db, "hamster", value);
-    }
-
-    for (int i = 0; i < 3; i++) {
-        //read all three and make sure the values are correct
-        status = xndb_get(db, "cat", value);
-        assert(status.ok && *value == 'k' && "pager test failed");
-        status = xndb_get(db, "dog", value);
-        assert(status.ok && *value == 'l' && "pager test failed");
-        status = xndb_get(db, "hamster", value);
-        assert(status.ok && *value == 'm' && "pager test failed");
-    }
-
-    xndb_free(db);
-
-    printf("pager_test passed\n");
 }
-
 
 void tx_commit_test() {
     struct xndb* db = xndb_init("students", true);
@@ -1211,9 +1302,7 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     put_test();
     system("exec rm -rf students");
-    //iterate_test();
-    //system("exec rm -rf students");
-    pager_test();
+    iterate_test();
     system("exec rm -rf students");
     tx_commit_test();
     system("exec rm -rf students");
