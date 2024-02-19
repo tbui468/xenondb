@@ -44,7 +44,6 @@ enum xnrecf {
     XNRECF_KEYSZ,
     XNRECF_VALUESZ,
     XNRECF_KEY,
-    XNRECF_VALUE
 };
 
 enum xnlogf {
@@ -54,25 +53,19 @@ enum xnlogf {
     XNLOGF_WRLOG //exists only if log type is XNLOGT_WRITE
 };
 
-enum xnfld {
-    //data page
-    XNFLD_HDR_PTRCOUNT,
-    XNFLD_HDR_SLTSTOP,
-    XNFLD_HDR_FREELISTHEAD,
-    XNFLD_HDR_OVERFLOWBLOCK,
-    XNFLD_PTR_SLTOFF,
-    XNFLD_SLT_NEXT,
-    XNFLD_SLT_KEYSZ,
-    XNFLD_SLT_VALUESZ,
-    XNFLD_SLT_KEY,
-    XNFLD_SLT_VALUE,
-
-    //log page
-    XNFLD_LOG_LOGTOP,
-    XNFLD_LOG_TYPE,
-    XNFLD_LOG_TXID,
-    XNFLD_LOG_LSN
+//shared header fields for both data and log files
+enum xnhdrf {
+    XNHDRF_PTRCOUNT,
+    XNHDRF_SLTSTOP,
+    XNHDRF_FREELISTHEAD,
+    XNHDRF_OVERFLOWBLOCK
 };
+
+//shared ptr fields for both data and log files
+enum xnptrf {
+    XNPTRF_SLOTOFF
+};
+
 
 //xenon db
 struct xndb {
@@ -117,14 +110,6 @@ struct xnlgrdr {
     int offset;
 };
 
-
-//TODO is is used anymore?  It think we're doing this inside the sltitr now
-struct xnitr {
-    int block_idx;
-    int rec_idx;
-    struct xnpgr *pager;
-};
-
 struct xntx {
     int id;
     struct xnpgr *pager;
@@ -134,6 +119,7 @@ struct xntx {
 
 struct xnsltitr {
     int slt_idx;
+    int slt_count;
     struct xnpg *page;
     const char *filename;
 };
@@ -141,7 +127,6 @@ struct xnsltitr {
 void xnlog_read(void *result, enum xnlogf fld, char *buf);
 void xnlgr_init_lgrdr(struct xnlgr *logger, struct xnlgrdr *lgrdr);
 bool xnlgrdr_next(struct xnlgrdr *lgrdr);
-void xnlgrdr_read(struct xnlgrdr *lgrdr, enum xnfld fld, void *data, size_t size);
 struct xnwrlg *xnlgrdr_read_write_log(struct xnlgrdr *lgrdr);
 void xnlgrdr_free_write_log(struct xnwrlg *wrlg);
 
@@ -161,11 +146,82 @@ struct xnstatus xnpg_delete(struct xnpg *page, const char *key);
 struct xnstatus xndb_delete(struct xndb *db, const char *key);
 void xnpg_write(struct xnpg *page, int16_t off, const void *data, size_t size);
 void xnpg_read(struct xnpg *page, int16_t off, void *data, size_t size);
-int16_t xnpg_fld_offset(struct xnpg *page, enum xnfld fld, int slot);
 
 struct xnstatus xnlgr_flush(struct xnlgr *logger);
 void xntx_redo_write(struct xntx *tx, char *log_buf);
 void xntx_undo_write(struct xntx *tx, char *log_buf);
+
+void xnsltitr_after_end(struct xnsltitr *itr, struct xnpg *page);
+bool xnsltitr_prev(struct xnsltitr *itr);
+void xnsltitr_before_begin(struct xnsltitr *itr, struct xnpg *page);
+bool xnsltitr_next(struct xnsltitr *itr);
+int16_t xnsltitr_offset(struct xnsltitr *itr);
+
+int xnrecf_offset(enum xnrecf fld, int rec_off) {
+    switch (fld) {
+    case XNRECF_NEXT:
+        return rec_off;
+    case XNRECF_KEYSZ:
+        return rec_off + sizeof(int16_t);
+    case XNRECF_VALUESZ:
+        return rec_off + sizeof(int16_t) * 2;
+    case XNRECF_KEY:
+        return rec_off + sizeof(int16_t) * 3;
+    default:
+        assert(false);
+    }
+}
+
+int xnlogf_offset(enum xnlogf fld) {
+    switch (fld) {
+    case XNLOGF_TYPE:
+        return 0;
+    case XNLOGF_TXID:
+        return sizeof(enum xnlogt);
+    case XNLOGF_LSN:
+        return sizeof(enum xnlogt) + sizeof(int);
+    case XNLOGF_WRLOG: //exists only if log type is XNLOGT_WRITE
+        return sizeof(enum xnlogt) + sizeof(int) * 2;
+    default:
+        assert(false);
+    }
+}
+
+int xnhdrf_offset(enum xnhdrf fld) {
+    switch (fld) {
+    case XNHDRF_PTRCOUNT:
+        return 0;
+    case XNHDRF_SLTSTOP:
+        return sizeof(int16_t);
+    case XNHDRF_FREELISTHEAD:
+        return sizeof(int16_t) * 2;
+    case XNHDRF_OVERFLOWBLOCK:
+        return sizeof(int16_t) * 3;
+    default:
+        assert(false);
+    }
+}
+
+int xnptrf_offset(enum xnptrf fld, int idx) {
+    return XN_BLKHDR_SZ + sizeof(int16_t) * idx;
+}
+
+
+int xnrec_fld_offset(enum xnrecf fld) {
+    switch (fld) {
+    case XNRECF_NEXT:
+        return 0;
+    case XNRECF_KEYSZ:
+        return sizeof(int16_t);
+    case XNRECF_VALUESZ:
+        return sizeof(int16_t) * 2;
+    case XNRECF_KEY:
+        return sizeof(int16_t) * 3;
+    default:
+        assert(false);
+        break;
+    }
+}
 
 void xnpgr_flush(struct xnpg *page) {
     int fd = xn_open(page->filename, O_RDWR, 0666);
@@ -278,7 +334,7 @@ void xnpg_init_data(struct xnpg *page) {
     page->pins = 0;
     page->block_idx = -1;
     int16_t block_size = XN_BLK_SZ;
-    xnpg_write(page, xnpg_fld_offset(page, XNFLD_HDR_SLTSTOP, -1), &block_size, sizeof(int16_t));
+    xnpg_write(page, xnhdrf_offset(XNHDRF_SLTSTOP), &block_size, sizeof(int16_t));
 }
 
 //TODO: this function is a mess and doesn't work if an existing db is opened - clean it up
@@ -363,9 +419,9 @@ int xndb_get_hash_bucket(const char* key) {
 
 bool xnslt_append(struct xnpg *page, int16_t data_size, int16_t *data_offset) {
     int16_t slot_count;
-    xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &slot_count, sizeof(int16_t));
+    xnpg_read(page, xnhdrf_offset(XNHDRF_PTRCOUNT), &slot_count, sizeof(int16_t));
     int16_t data_top;
-    xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_SLTSTOP, -1), &data_top, sizeof(int16_t));
+    xnpg_read(page, xnhdrf_offset(XNHDRF_SLTSTOP), &data_top, sizeof(int16_t));
 
     data_top -= data_size;
     int16_t new_slt_idx = slot_count;
@@ -373,25 +429,25 @@ bool xnslt_append(struct xnpg *page, int16_t data_size, int16_t *data_offset) {
 
     if (data_top <= XN_BLKHDR_SZ + sizeof(int16_t) * slot_count) return false;
 
-    xnpg_write(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &slot_count, sizeof(int16_t));
-    xnpg_write(page, xnpg_fld_offset(page, XNFLD_HDR_SLTSTOP, -1), &data_top, sizeof(int16_t));
-    xnpg_write(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, new_slt_idx), &data_top, sizeof(int16_t));
+    xnpg_write(page, xnhdrf_offset(XNHDRF_PTRCOUNT), &slot_count, sizeof(int16_t));
+    xnpg_write(page, xnhdrf_offset(XNHDRF_SLTSTOP), &data_top, sizeof(int16_t));
+    xnpg_write(page, xnptrf_offset(XNPTRF_SLOTOFF, new_slt_idx), &data_top, sizeof(int16_t));
 
     *data_offset = data_top;
     return true;
 }
 
 int xnpg_find_rec_idx(struct xnpg *page, const char *key) {
-    int16_t rec_count;
-    xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
-    for (int i = 0; i < rec_count; i++) {
+    struct xnsltitr itr;
+    xnsltitr_before_begin(&itr, page);
+    while (xnsltitr_next(&itr)) {
+        int16_t slot_off = xnsltitr_offset(&itr);
         int16_t key_size;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_KEYSZ, i), &key_size, sizeof(int16_t));
-        char buf[key_size + 1];
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_KEY, i), buf, key_size);
-        buf[key_size] = '\0';
-        if (strcmp(key, buf) == 0 )
-            return i;
+        xnpg_read(page, slot_off + xnrec_fld_offset(XNRECF_KEYSZ), &key_size, sizeof(int16_t));
+        int16_t key_off = slot_off + xnrec_fld_offset(XNRECF_KEY);
+        if (strlen(key) == key_size && strncmp(page->buf + key_off, key, key_size) == 0) {
+            return itr.slt_idx;
+        }
     }
 
     return -1;
@@ -405,69 +461,8 @@ void xnpg_read(struct xnpg *page, int16_t off, void *data, size_t size) {
     memcpy(data, page->buf + off, size);
 }
 
-
-int16_t xnpg_fld_offset(struct xnpg *page, enum xnfld fld, int slot) {
-    switch (fld) {
-    case XNFLD_HDR_FREELISTHEAD:
-        assert(slot == -1 && "xenondb: slot idx not used for header fields");
-        return 0;
-    case XNFLD_HDR_PTRCOUNT:
-        assert(slot == -1 && "xenondb: slot idx not used for header fields");
-        return sizeof(int16_t);
-    case XNFLD_HDR_SLTSTOP:
-        assert(slot == -1 && "xenondb: slot idx not used for header fields");
-        return sizeof(int16_t) * 2;
-    case XNFLD_HDR_OVERFLOWBLOCK:
-        assert(slot == -1 && "xenondb: slot idx not used for header fields");
-        return sizeof(int16_t) * 3;
-    case XNFLD_PTR_SLTOFF:
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        return XN_BLKHDR_SZ + sizeof(int16_t) * slot;
-    case XNFLD_SLT_NEXT: {
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        int16_t slot_off;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, slot), &slot_off, sizeof(int16_t));
-        return slot_off;
-    }
-    case XNFLD_SLT_KEYSZ: {
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        int16_t slot_off;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, slot), &slot_off, sizeof(int16_t));
-        return slot_off + sizeof(int16_t);
-    }
-    case XNFLD_SLT_VALUESZ: {
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        int16_t slot_off;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, slot), &slot_off, sizeof(int16_t));
-        return slot_off + sizeof(int16_t) * 2;
-    }
-    case XNFLD_SLT_KEY: {
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        int16_t slot_off;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, slot), &slot_off, sizeof(int16_t));
-        return slot_off + sizeof(int16_t) * 3;
-    }
-    case XNFLD_SLT_VALUE: {
-        assert(slot > -1 && "xenondb: slot idx must be 0 or large");
-        int16_t slot_off;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, slot), &slot_off, sizeof(int16_t));
-        int16_t keysz;
-        xnpg_read(page, xnpg_fld_offset(page, XNFLD_SLT_KEYSZ, slot), &keysz, sizeof(int16_t));
-        return slot_off + sizeof(int16_t) * 3 + keysz;
-    }
-    case XNFLD_LOG_LOGTOP: {
-        assert(slot == -1 && "xenondb: slot idx not used for log header fields");
-        return 0;
-    }
-    default:
-        assert(false && "xenondb: invalid field");
-        break;
-    }
-}
-
-
 void xnpg_init_freeslot_search(struct xnpg *page) {
-    page->cur = xnpg_fld_offset(page, XNFLD_HDR_FREELISTHEAD, -1);
+    page->cur = xnhdrf_offset(XNHDRF_FREELISTHEAD);
     page->prev = 0;
 }
 
@@ -532,10 +527,14 @@ struct xnstatus xntx_do_put(struct xntx *tx, struct xnpg *page, const char *key,
     int rec_idx = xnpg_find_rec_idx(page, key);
 
     if (rec_idx != -1) {
+        int16_t slot_off;
+        xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_idx), &slot_off, sizeof(int16_t));
         int16_t old_valsz;
-        xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, rec_idx), &old_valsz, sizeof(int16_t));
+        xntx_read(tx, page, xnrecf_offset(XNRECF_VALUESZ, slot_off), &old_valsz, sizeof(int16_t));
         if (strlen(value) == old_valsz) {
-            xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, rec_idx), value, old_valsz);
+            int16_t keysz;
+            xntx_read(tx, page, xnrecf_offset(XNRECF_KEYSZ, slot_off), &keysz, sizeof(int16_t));
+            xntx_write(tx, page, xnrecf_offset(XNRECF_KEY, slot_off) + keysz, value, old_valsz);
             return xnstatus_create(true, NULL);
         }
 
@@ -548,31 +547,33 @@ struct xnstatus xntx_do_put(struct xntx *tx, struct xnpg *page, const char *key,
 
     int16_t free_offset = xnpg_get_freeslot_offset(page, key, value);
     int16_t rec_count;
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
+    xntx_read(tx, page, xnhdrf_offset(XNHDRF_PTRCOUNT), &rec_count, sizeof(int16_t));
 
     if (free_offset != -1) {
         //reuse old slot that matches size
-        xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, rec_count), &free_offset, sizeof(int16_t));
+        xntx_write(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_count), &free_offset, sizeof(int16_t));
     } else {
         //using a new slot
         int16_t datatop;
-        xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_HDR_SLTSTOP, -1), &datatop, sizeof(int16_t));
+        xntx_read(tx, page, xnhdrf_offset(XNHDRF_SLTSTOP), &datatop, sizeof(int16_t));
         int16_t dataoff = datatop - (sizeof(int16_t) * 3 + strlen(key) + strlen(value));
-        xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_HDR_SLTSTOP, -1), &dataoff, sizeof(int16_t));
-        xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, rec_count), &dataoff, sizeof(int16_t));
+        xntx_write(tx, page, xnhdrf_offset(XNHDRF_SLTSTOP), &dataoff, sizeof(int16_t));
+        xntx_write(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_count), &dataoff, sizeof(int16_t));
     }
 
     int16_t next = 0;
     int16_t keysz = strlen(key);
     int16_t valsz = strlen(value);
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_NEXT, rec_count), &next, sizeof(int16_t));
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_KEYSZ, rec_count), &keysz, sizeof(int16_t));
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, rec_count), &valsz, sizeof(int16_t));
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_KEY, rec_count), key, keysz);
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, rec_count), value, valsz);
+    int16_t slot_off;
+    xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_count), &slot_off, sizeof(int16_t));
+    xntx_write(tx, page, xnrecf_offset(XNRECF_NEXT, slot_off), &next, sizeof(int16_t));
+    xntx_write(tx, page, xnrecf_offset(XNRECF_KEYSZ, slot_off), &keysz, sizeof(int16_t));
+    xntx_write(tx, page, xnrecf_offset(XNRECF_VALUESZ, slot_off), &valsz, sizeof(int16_t));
+    xntx_write(tx, page, xnrecf_offset(XNRECF_KEY, slot_off), key, keysz);
+    xntx_write(tx, page, xnrecf_offset(XNRECF_KEY, slot_off) + keysz, value, valsz);
 
     rec_count++;
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &rec_count, sizeof(int16_t));
+    xntx_write(tx, page, xnhdrf_offset(XNHDRF_PTRCOUNT), &rec_count, sizeof(int16_t));
     return xnstatus_create(true, NULL);
 }
 
@@ -600,8 +601,12 @@ struct xnstatus xntx_do_get(struct xntx *tx, struct xnpg *page, const char *key,
     }
 
     int16_t valsz;
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUESZ, rec_idx), &valsz, sizeof(int16_t));
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_SLT_VALUE, rec_idx), result, valsz);
+    int16_t rec_off;
+    xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_idx), &rec_off, sizeof(int16_t));
+    xntx_read(tx, page, xnrecf_offset(XNRECF_VALUESZ, rec_off), &valsz, sizeof(int16_t));
+    int16_t keysz;
+    xntx_read(tx, page, xnrecf_offset(XNRECF_KEYSZ, rec_off), &keysz, sizeof(int16_t));
+    xntx_read(tx, page, xnrecf_offset(XNRECF_KEY, rec_off) + keysz, result, valsz);
     result[valsz] = '\0';
     return xnstatus_create(true, NULL);
 }
@@ -626,30 +631,30 @@ struct xnstatus xntx_do_delete(struct xntx *tx, struct xnpg *page, const char *k
         return xnstatus_create(false, "xenondb: key not found");
     }
 
+    //insert new free record at head of freelist
+    //the 'next' field in this record now points to the previous freelist head
     int16_t prev_freelisthead;
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_HDR_FREELISTHEAD, -1), &prev_freelisthead, sizeof(int16_t));
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_SLT_NEXT, rec_idx), &prev_freelisthead, sizeof(int16_t));
+    xntx_read(tx, page, xnhdrf_offset(XNHDRF_FREELISTHEAD), &prev_freelisthead, sizeof(int16_t));
+    int16_t rec_off;
+    xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_idx), &rec_off, sizeof(int16_t));
+    xntx_write(tx, page, xnrecf_offset(XNRECF_NEXT, rec_off), &prev_freelisthead, sizeof(int16_t));
+
     int16_t data_off;
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, rec_idx), &data_off, sizeof(int16_t));
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_HDR_FREELISTHEAD, -1), &data_off, sizeof(int16_t));
+    xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, rec_idx), &data_off, sizeof(int16_t));
+    xntx_write(tx, page, xnhdrf_offset(XNHDRF_FREELISTHEAD), &data_off, sizeof(int16_t));
 
     int16_t ptr_count;
-    xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &ptr_count, sizeof(int16_t));
+    xntx_read(tx, page, xnhdrf_offset(XNHDRF_PTRCOUNT), &ptr_count, sizeof(int16_t));
 
     //copy pointers to the left to remove deleted ptr
     for (int i = rec_idx; i < ptr_count - 1; i++) {
         int16_t right_ptr;
-        xntx_read(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, i + 1), &right_ptr, sizeof(int16_t));
-        xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, i), &right_ptr, sizeof(int16_t));
+        xntx_read(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, i + 1), &right_ptr, sizeof(int16_t));
+        xntx_write(tx, page, xnptrf_offset(XNPTRF_SLOTOFF, i), &right_ptr, sizeof(int16_t));
     }
    
-    //TODO: can get rid of this - not strictly necessary.  We can just leave junk data there
-    //zero out right most ptr
-    int16_t zero = 0;
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_PTR_SLTOFF, ptr_count - 1), &zero, sizeof(int16_t));
-
     ptr_count--;
-    xntx_write(tx, page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &ptr_count, sizeof(int16_t));
+    xntx_write(tx, page, xnhdrf_offset(XNHDRF_PTRCOUNT), &ptr_count, sizeof(int16_t));
     return xnstatus_create(true, NULL);
 }
 
@@ -684,18 +689,28 @@ struct xnstatus xntx_commit(struct xntx *tx) {
 void xnsltitr_after_end(struct xnsltitr *itr, struct xnpg *page) {
     itr->page = page;
     int16_t slt_idx;
-    xnpg_read(page, xnpg_fld_offset(page, XNFLD_HDR_PTRCOUNT, -1), &slt_idx, sizeof(int16_t));
+    xnpg_read(page, xnhdrf_offset(XNHDRF_PTRCOUNT), &slt_idx, sizeof(int16_t));
     itr->slt_idx = slt_idx;
+    itr->slt_count = -1; //not used
 }
 bool xnsltitr_prev(struct xnsltitr *itr) {
     itr->slt_idx--;
-    if (itr->slt_idx >= 0)
-        return true;
-    return false;
+    return itr->slt_idx >= 0;
+}
+void xnsltitr_before_begin(struct xnsltitr *itr, struct xnpg *page) {
+    itr->page = page;
+    itr->slt_idx = -1;
+    int16_t slt_count;
+    xnpg_read(page, xnhdrf_offset(XNHDRF_PTRCOUNT), &slt_count, sizeof(int16_t));
+    itr->slt_count = slt_count;
+}
+bool xnsltitr_next(struct xnsltitr *itr) {
+    itr->slt_idx++;
+    return itr->slt_idx < itr->slt_count;
 }
 int16_t xnsltitr_offset(struct xnsltitr *itr) {
     int16_t off;
-    xnpg_read(itr->page, xnpg_fld_offset(itr->page, XNFLD_PTR_SLTOFF, itr->slt_idx), &off, sizeof(int16_t));
+    xnpg_read(itr->page, xnptrf_offset(XNPTRF_SLOTOFF, itr->slt_idx), &off, sizeof(int16_t));
     return off;
 }
 
@@ -783,7 +798,7 @@ void xnlgr_init(struct xnlgr *logger, const char* log_path) {
     logger->page.pins = 0;
     logger->page.block_idx = 0;
     int16_t logtop = XN_BLK_SZ;
-    xnpg_write(&logger->page, xnpg_fld_offset(&logger->page, XNFLD_LOG_LOGTOP, -1), &logtop, sizeof(int16_t));
+    xnpg_write(&logger->page, xnhdrf_offset(XNHDRF_SLTSTOP), &logtop, sizeof(int16_t));
     xnlgr_flush(logger);
     
     //TODO 
