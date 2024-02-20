@@ -910,7 +910,6 @@ int xnlgr_next_lsn(struct xnlgr *logger) {
 void xntx_redo_write(struct xntx *tx, char *log_buf) {
     int tx_id;
     xnlog_read(&tx_id, XNLOGF_TXID, log_buf);
-    assert(tx->id == tx_id);
 
     enum xnlogt type;
     xnlog_read(&type, XNLOGF_TYPE, log_buf);
@@ -938,7 +937,6 @@ void xntx_redo_write(struct xntx *tx, char *log_buf) {
 void xntx_undo_write(struct xntx *tx, char *log_buf) {
     int tx_id;
     xnlog_read(&tx_id, XNLOGF_TXID, log_buf);
-    assert(tx->id == tx_id);
 
     enum xnlogt type;
     xnlog_read(&type, XNLOGF_TYPE, log_buf);
@@ -1058,7 +1056,6 @@ void xndb_recover(struct xndb *db) {
     struct xnitr itr;
     xnitr_after_end(&itr, tx.pager, tx.logger->log_path);
     while (xnitr_prev(&itr)) {
-        printf("looking at a log\n");
         int slot_off = xnitr_slotoff(&itr);
         int block_idx = xnitr_blockidx(&itr);
         struct xnpg *page = xnpgr_pin(tx.pager, tx.logger->log_path, block_idx);
@@ -1082,8 +1079,6 @@ void xndb_recover(struct xndb *db) {
         xnpgr_unpin(page);
     }
 
-    //printf("rb length: %d, cm length: %d\n", rb->count, cm->count);
-
     struct xnitr fitr;
     xnitr_before_begin(&fitr, tx.pager, tx.logger->log_path);
     while (xnitr_next(&fitr)) {
@@ -1097,7 +1092,7 @@ void xndb_recover(struct xndb *db) {
         enum xnlogt type;
         xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
 
-        if (type == XNLOGT_COMMIT) {
+        if (type == XNLOGT_WRITE && xnilist_contains(cm, tx_id)) {
             xntx_redo_write(&tx, page->buf + slot_off);
         }
 
@@ -1300,7 +1295,6 @@ void recovery_test() {
             xntx_commit(&tx);
         }
 
-        /*
         {
             struct xntx tx;
             xndb_init_tx(db, &tx);
@@ -1308,23 +1302,26 @@ void recovery_test() {
             xntx_rollback(&tx);
         }
 
+        //TODO shouldn't call private API here, but need to flush
+        //log files of commit/rollback above to test recovery
+        xnpgr_flush_all(db->pager);
+
         {
             struct xntx tx;
             xndb_init_tx(db, &tx);
             xntx_put(&tx, "turtle", "c");
             //not commiting nor rolling back
             //simulating database crashing
-        }*/
+        }
     }
 
-    /*
     {
-        struct xndb* db = xndb_init("students", true);
+        struct xndb* db = xndb_init("students", false);
         struct xnstatus s;
 
         char buf[2];
         s = xndb_get(db, "cat", buf);
-        assert(s.ok && "recovery test failed");
+        assert(s.ok && *buf == 'a' && "recovery test failed");
 
         s = xndb_get(db, "dog", buf);
         assert(!s.ok && "recovery test failed");
@@ -1332,7 +1329,7 @@ void recovery_test() {
         s = xndb_get(db, "turtle", buf);
         assert(!s.ok && "recovery test failed");
         xndb_free(db);
-    }*/
+    }
 
     printf("recovery_test passed\n");
 }
@@ -1352,7 +1349,7 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     tx_rollback_test();
     system("exec rm -rf students");
-//    recovery_test();
-//    system("exec rm -rf students");
+    recovery_test();
+    system("exec rm -rf students");
     return 0;
 }
