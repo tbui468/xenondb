@@ -135,8 +135,6 @@ struct xnitr {
 void xnpgr_unpin(struct xnpg *page);
 struct xnpg *xnpgr_pin(struct xnpgr *pager, const char* filename, int block_idx);
 
-void xnlog_read(void *result, enum xnlogf fld, char *buf);
-
 void xnlgr_init(struct xnlgr *logger, const char* log_path, struct xnpgr *pager);
 struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log, struct xnwrlg *wrlog_data, int tx_id);
 void xndb_init_tx(struct xndb *db, struct xntx *tx);
@@ -154,8 +152,8 @@ struct xnstatus xndb_delete(struct xndb *db, const char *key);
 void xnpg_write(struct xnpg *page, int off, const void *data, size_t size);
 void xnpg_read(struct xnpg *page, int off, void *data, size_t size);
 
-void xntx_redo_write(struct xntx *tx, char *log_buf);
-void xntx_undo_write(struct xntx *tx, char *log_buf);
+void xntx_redo_write(struct xntx *tx, struct xnpg *page, int log_off);
+void xntx_undo_write(struct xntx *tx, struct xnpg *page, int log_off);
 
 void xnsltitr_after_end(struct xnsltitr *itr, struct xnpg *page);
 bool xnsltitr_prev(struct xnsltitr *itr);
@@ -312,16 +310,16 @@ int xnrecf_offset(enum xnrecf fld, int rec_off) {
     }
 }
 
-int xnlogf_offset(enum xnlogf fld) {
+int xnlogf_offset(enum xnlogf fld, int log_off) {
     switch (fld) {
     case XNLOGF_TYPE:
-        return 0;
+        return log_off;
     case XNLOGF_TXID:
-        return sizeof(enum xnlogt);
+        return log_off + sizeof(enum xnlogt);
     case XNLOGF_LSN:
-        return sizeof(enum xnlogt) + sizeof(int);
+        return log_off + sizeof(enum xnlogt) + sizeof(int);
     case XNLOGF_WRLOG: //exists only if log type is XNLOGT_WRITE
-        return sizeof(enum xnlogt) + sizeof(int) * 2;
+        return log_off + sizeof(enum xnlogt) + sizeof(int) * 2;
     default:
         assert(false);
     }
@@ -836,14 +834,14 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
         struct xnpg *page = xnpgr_pin(tx->pager, tx->logger->log_path, block_idx);
 
         int tx_id;
-        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TXID, slot_off), &tx_id, sizeof(int));
         if (tx_id != tx->id) {
             xnpgr_unpin(page);
             continue;
         }
 
         enum xnlogt type;
-        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TYPE, slot_off), &type, sizeof(enum xnlogt));
         if (type == XNLOGT_START) {
             xnpgr_unpin(page);
             break;
@@ -854,7 +852,7 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
             continue;
         }
 
-        xntx_undo_write(tx, page->buf + slot_off);
+        xntx_undo_write(tx, page, slot_off);
         xnpgr_unpin(page);
     }
 
@@ -907,120 +905,85 @@ int xnlgr_next_lsn(struct xnlgr *logger) {
     return lsn;
 }
 
-void xntx_redo_write(struct xntx *tx, char *log_buf) {
+void xntx_redo_write(struct xntx *tx, struct xnpg *page, int log_off) {
     int tx_id;
-    xnlog_read(&tx_id, XNLOGF_TXID, log_buf);
+    xnpg_read(page, xnlogf_offset(XNLOGF_TXID, log_off), &tx_id, sizeof(int));
 
     enum xnlogt type;
-    xnlog_read(&type, XNLOGF_TYPE, log_buf);
+    xnpg_read(page, xnlogf_offset(XNLOGF_TYPE, log_off), &type, sizeof(enum xnlogt));
     assert(type == XNLOGF_WRLOG);
 
     //skip log type, tx id, and lsn
-    int offset = sizeof(enum xnlogt) + sizeof(int) * 2;
+    int offset = log_off + sizeof(enum xnlogt) + sizeof(int) * 2;
 
     int block_idx;
-    memcpy(&block_idx, log_buf + offset, sizeof(int));
+    memcpy(&block_idx, page->buf + offset, sizeof(int));
     offset += sizeof(int);
     int data_off;
-    memcpy(&data_off, log_buf + offset, sizeof(int));
+    memcpy(&data_off, page->buf + offset, sizeof(int));
     offset += sizeof(int);
     int data_size;
-    memcpy(&data_size, log_buf + offset, sizeof(int));
+    memcpy(&data_size, page->buf + offset, sizeof(int));
     offset += sizeof(int); //offset is at old data
     offset += data_size; //offset is at new data
 
-    struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
-    xnpg_write(page, data_off, log_buf + offset, data_size);
-    xnpgr_unpin(page);
+    struct xnpg *data_page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
+    xnpg_write(data_page, data_off, page->buf + offset, data_size);
+    xnpgr_unpin(data_page);
 }
 
-void xntx_undo_write(struct xntx *tx, char *log_buf) {
+void xntx_undo_write(struct xntx *tx, struct xnpg *page, int log_off) {
     int tx_id;
-    xnlog_read(&tx_id, XNLOGF_TXID, log_buf);
+    xnpg_read(page, xnlogf_offset(XNLOGF_TXID, log_off), &tx_id, sizeof(int));
 
     enum xnlogt type;
-    xnlog_read(&type, XNLOGF_TYPE, log_buf);
+    xnpg_read(page, xnlogf_offset(XNLOGF_TYPE, log_off), &type, sizeof(enum xnlogt));
     assert(type == XNLOGF_WRLOG);
 
     //skip log type, tx id, and lsn
-    int offset = sizeof(enum xnlogt) + sizeof(int) * 2;
+    int offset = log_off + sizeof(enum xnlogt) + sizeof(int) * 2;
 
     int block_idx;
-    memcpy(&block_idx, log_buf + offset, sizeof(int));
+    memcpy(&block_idx, page->buf + offset, sizeof(int));
     offset += sizeof(int);
     int data_off;
-    memcpy(&data_off, log_buf + offset, sizeof(int));
+    memcpy(&data_off, page->buf + offset, sizeof(int));
     offset += sizeof(int);
     int data_size;
-    memcpy(&data_size, log_buf + offset, sizeof(int));
+    memcpy(&data_size, page->buf + offset, sizeof(int));
     offset += sizeof(int); //offset is at old data now
 
-    struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
-    xnpg_write(page, data_off, log_buf + offset, data_size);
-    xnpgr_unpin(page);
+    struct xnpg *data_page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
+    xnpg_write(data_page, data_off, page->buf + offset, data_size);
+    xnpgr_unpin(data_page);
 }
 
-void xnlog_read(void *result, enum xnlogf fld, char *buf) {
-    switch (fld) {
-    case XNLOGF_TYPE:
-        memcpy(result, buf, sizeof(enum xnlogt));
-        break;
-    case XNLOGF_TXID:
-        memcpy(result, buf + sizeof(enum xnlogt), sizeof(int));
-        break;
-    case XNLOGF_LSN:
-        memcpy(result, buf + sizeof(enum xnlogt) + sizeof(int), sizeof(int));
-        break;
-    case XNLOGF_WRLOG:
-        //use xntx_undo_write and xntx_redo_write rather
-        //than reading write log data directly
-    default:
-        assert(false);
-        break;
-    }
-}
 
-void xnlog_write(char *buf, enum xnlogf fld, const void *data) {
-    switch (fld) {
-    case XNLOGF_TYPE:
-        memcpy(buf, data, sizeof(enum xnlogt));
-        break;
-    case XNLOGF_TXID:
-        memcpy(buf + sizeof(enum xnlogt), data, sizeof(int));
-        break;
-    case XNLOGF_LSN:
-        memcpy(buf + sizeof(enum xnlogt) + sizeof(int), data, sizeof(int));
-        break;
-    case XNLOGF_WRLOG: {//exists only if log type is XNLOGT_WRITE
-        struct xnwrlg *wrlg = (struct xnwrlg*)data;
-        int offset = sizeof(enum xnlogt) + sizeof(int) * 2;
-        memcpy(buf + offset, &wrlg->block_idx, sizeof(wrlg->block_idx));
-        offset += sizeof(wrlg->block_idx);
-        memcpy(buf + offset, &wrlg->offset, sizeof(wrlg->offset));
-        offset += sizeof(wrlg->offset);
-        memcpy(buf + offset, &wrlg->data_size, sizeof(wrlg->data_size));
-        offset += sizeof(wrlg->data_size);
-        memcpy(buf + offset, wrlg->old_data, wrlg->data_size);
-        offset += wrlg->data_size;
-        memcpy(buf + offset, wrlg->new_data, wrlg->data_size);
-        break;
-    }
-    default:
-        assert(false);
-        break;
-    }
+void xnwrlog_serialize(char *buf, struct xnwrlg *wrlog) {
+    int off = 0;
+    memcpy(buf + off, &wrlog->block_idx, sizeof(int));
+    off += sizeof(int);
+    memcpy(buf + off, &wrlog->offset, sizeof(int));
+    off += sizeof(int);
+    memcpy(buf + off, &wrlog->data_size, sizeof(int));
+    off += sizeof(int);
+    memcpy(buf + off, wrlog->old_data, wrlog->data_size);
+    off += wrlog->data_size;
+    memcpy(buf + off, wrlog->new_data, wrlog->data_size);
 }
 
 struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log_type, struct xnwrlg *wrlog_data, int tx_id) {
     int lsn = xnlgr_next_lsn(logger);
     int log_size = sizeof(log_type) + sizeof(tx_id) + sizeof(lsn);
+    int wrlog_size;
 
     if (log_type == XNLOGT_WRITE) {
         assert(wrlog_data != NULL);
-        log_size += sizeof(wrlog_data->block_idx) + 
+        wrlog_size = sizeof(wrlog_data->block_idx) + 
                     sizeof(wrlog_data->offset) + 
                     sizeof(wrlog_data->data_size) + 
                     wrlog_data->data_size * 2; //old and new data length
+        log_size += wrlog_size;
     }
 
     struct xnpg *page = xnpgr_pin(logger->pager, logger->log_path, 0);
@@ -1032,12 +995,14 @@ struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log_type, struct x
     }
 
     char *buf = page->buf + log_off;
-    xnlog_write(buf, XNLOGF_TYPE, &log_type);
-    xnlog_write(buf, XNLOGF_TXID, &tx_id);
-    xnlog_write(buf, XNLOGF_LSN, &lsn);
+    xnpg_write(page, xnlogf_offset(XNLOGF_TYPE, log_off), &log_type, sizeof(enum xnlogt));
+    xnpg_write(page, xnlogf_offset(XNLOGF_TXID, log_off), &tx_id, sizeof(int));
+    xnpg_write(page, xnlogf_offset(XNLOGF_LSN, log_off), &lsn, sizeof(int));
 
     if (log_type == XNLOGT_WRITE) {
-        xnlog_write(buf, XNLOGF_WRLOG, wrlog_data);
+        char buf[wrlog_size];
+        xnwrlog_serialize(buf, wrlog_data);
+        xnpg_write(page, xnlogf_offset(XNLOGF_WRLOG, log_off), buf, wrlog_size);
     }
 
     xnpgr_unpin(page);
@@ -1061,10 +1026,10 @@ void xndb_recover(struct xndb *db) {
         struct xnpg *page = xnpgr_pin(tx.pager, tx.logger->log_path, block_idx);
 
         int tx_id;
-        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TXID, slot_off), &tx_id, sizeof(int));
 
         enum xnlogt type;
-        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TYPE, slot_off), &type, sizeof(enum xnlogt));
 
         if (type == XNLOGT_ROLLBACK) {
             xnilist_append(rb, tx_id); 
@@ -1072,7 +1037,7 @@ void xndb_recover(struct xndb *db) {
             xnilist_append(cm, tx_id); 
         } else if (type == XNLOGT_WRITE) {
             if (xnilist_contains(rb, tx_id)) {
-                xntx_undo_write(&tx, page->buf + slot_off);
+                xntx_undo_write(&tx, page, slot_off);
             }
         }
 
@@ -1087,13 +1052,13 @@ void xndb_recover(struct xndb *db) {
         struct xnpg *page = xnpgr_pin(tx.pager, tx.logger->log_path, block_idx);
 
         int tx_id;
-        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TXID, slot_off), &tx_id, sizeof(int));
 
         enum xnlogt type;
-        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+        xnpg_read(page, xnlogf_offset(XNLOGF_TYPE, slot_off), &type, sizeof(enum xnlogt));
 
         if (type == XNLOGT_WRITE && xnilist_contains(cm, tx_id)) {
-            xntx_redo_write(&tx, page->buf + slot_off);
+            xntx_redo_write(&tx, page, slot_off);
         }
 
         xnpgr_unpin(page);
