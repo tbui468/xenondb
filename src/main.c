@@ -106,11 +106,6 @@ struct xnwrlg {
     int block_idx;
 };
 
-struct xnlgrdr {
-    int block_idx;
-    int offset;
-};
-
 struct xntx {
     int id;
     struct xnpgr *pager;
@@ -141,10 +136,6 @@ void xnpgr_unpin(struct xnpg *page);
 struct xnpg *xnpgr_pin(struct xnpgr *pager, const char* filename, int block_idx);
 
 void xnlog_read(void *result, enum xnlogf fld, char *buf);
-void xnlgr_init_lgrdr(struct xnlgr *logger, struct xnlgrdr *lgrdr);
-bool xnlgrdr_next(struct xnlgrdr *lgrdr);
-struct xnwrlg *xnlgrdr_read_write_log(struct xnlgrdr *lgrdr);
-void xnlgrdr_free_write_log(struct xnwrlg *wrlg);
 
 void xnlgr_init(struct xnlgr *logger, const char* log_path);
 struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log, struct xnwrlg *wrlog_data, int tx_id);
