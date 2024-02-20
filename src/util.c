@@ -1,5 +1,6 @@
 #include "util.h"
 
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -11,6 +12,16 @@
 void *xn_malloc(size_t size) {
     void *p;
     if (!(p = malloc(size))) {
+        fprintf(stderr, "xenondb: malloc failed\n");
+        exit(1);
+    }
+    return p;
+}
+
+
+void *xn_realloc(void* ptr, size_t size) {
+    void *p;
+    if (!(p = realloc(ptr, size))) {
         fprintf(stderr, "xenondb: malloc failed\n");
         exit(1);
     }
@@ -71,3 +82,49 @@ void xn_read(int fd, void *buf, size_t count) {
     }
 }
 
+
+void xnilist_init(struct xnilist **il) {
+    *il = xn_malloc(sizeof(struct xnilist));
+    (*il)->ints = NULL;
+    (*il)->count = 0;
+    (*il)->capacity = 0;
+}
+
+void xnilist_append(struct xnilist *il, int n) {
+    if (il->count == il->capacity) {
+        il->capacity = il->capacity == 0 ? 8 : il->capacity * 2;
+        il->ints = xn_realloc(il->ints, il->capacity * sizeof(int));
+    }
+
+    il->ints[il->count] = n;
+    il->count++;
+}
+
+bool xnilist_contains(struct xnilist *il, int n) {
+    for (int i = 0; i < il->count; i++) {
+        if (*(il->ints + i) == n)
+            return true;
+    }
+    return false;
+}
+
+void *xn_memalign(size_t size) {
+    struct stat fstat;
+    stat("/", &fstat);
+    size_t block_size = fstat.st_blksize;
+    
+    void *ptr;
+    if (posix_memalign(&ptr, block_size, size)) {
+        fprintf(stderr, "xenondb: posix_memalign failed\n");
+        exit(1);
+    }
+    return ptr;
+}
+
+char *xn_strcpy(char *dst, const char *src) {
+    strcpy(dst, src);
+}
+
+char *xn_strcat(char* dst, const char *src) {
+    strcat(dst, src);
+}

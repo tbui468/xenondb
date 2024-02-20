@@ -1,10 +1,10 @@
 //for O_DIRECT
 #define _GNU_SOURCE
 
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <string.h>
@@ -71,6 +71,7 @@ enum xnptrf {
 struct xndb {
     char dir_path[256];
     char data_path[256];
+    char log_path[256];
     struct xnpgr *pager;
     struct xnlgr *logger;
     int tx_id;
@@ -173,6 +174,8 @@ bool xnsltitr_next(struct xnsltitr *itr);
 int xnsltitr_offset(struct xnsltitr *itr);
 
 int xnrecf_offset(enum xnrecf fld, int rec_off);
+
+void xndb_recover(struct xndb *db);
 
 int xnfile_block_count(const char *filename) {
     int fd = xn_open(filename, O_RDWR, 0666);
@@ -430,7 +433,7 @@ struct xnpgr *xnpgr_create(const char* data_path) {
 void xndb_free(struct xndb* db) {
     xnlgr_flush(db->logger);
     xnpgr_flush_all(db->pager);
-    xn_free((void*)db);
+    free((void*)db);
 }
 
 void xndb_make_dir(const char *name) {
@@ -468,7 +471,7 @@ void xnpg_init_data(struct xnpg *page) {
 }
 
 //TODO: this function is a mess and doesn't work if an existing db is opened - clean it up
-struct xndb* xndb_init(char* path, bool make_dir) {
+struct xndb* xndb_init(const char* path, bool make_dir) {
     if (make_dir) {
         xndb_make_dir(path);
     }
@@ -483,17 +486,11 @@ struct xndb* xndb_init(char* path, bool make_dir) {
     db->tx_id = 0;
 
     //make directory path
-    memcpy(db->dir_path, path, strlen(path));
-    db->dir_path[strlen(path)] = '\0';
+    xn_strcpy(db->dir_path, path);
 
     //make data path
-    int len = strlen(db->dir_path);
-    memcpy(db->data_path, db->dir_path, len);
-    db->data_path[len] = '/';
-    len++;
-    memcpy(db->data_path + len, "data", 4);
-    len += 4;
-    db->data_path[len] = '\0';
+    xn_strcpy(db->data_path, path);
+    xn_strcat(db->data_path, "/data");
 
     int fd = xn_open(db->data_path, O_CREAT | O_RDWR, 0666);
 
@@ -506,26 +503,17 @@ struct xndb* xndb_init(char* path, bool make_dir) {
 
     close(fd);
 
-    //logger page buffer needs to be memory aligned for O_DIRECT to be used
-    struct stat fstat;
-    stat(db->data_path, &fstat);
-    size_t block_size = fstat.st_blksize;
-
-    posix_memalign((void**)&db->logger, block_size, sizeof(struct xnlgr));
+    db->logger = xn_memalign(sizeof(struct xnlgr));
     xnpg_init_data(&db->logger->page);
 
-    char log_path[256];
-    len = strlen(db->dir_path);
-    memcpy(log_path, db->dir_path, len);
-    log_path[len] = '/';
-    len++;
-    memcpy(log_path + len, "log", 3);
-    len += 3;
-    log_path[len] = '\0';
-    xnlgr_init(db->logger, log_path);
+    xn_strcpy(db->log_path, db->dir_path);
+    xn_strcat(db->log_path, "/log");
+    xnlgr_init(db->logger, db->log_path);
 
     //making the pager
     db->pager = xnpgr_create(db->data_path);
+
+    xndb_recover(db);
 
     return db;
 }
@@ -813,6 +801,7 @@ void xndb_init_tx(struct xndb *db, struct xntx *tx) {
 
 struct xnstatus xntx_commit(struct xntx *tx) {
     xnlgr_write(tx->logger, XNLOGT_COMMIT, NULL, tx->id);
+    xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
     return xnstatus_create(true, NULL);
 }
 
@@ -877,39 +866,8 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
         xnpgr_unpin(page);
     }
 
-    /*
-    struct xnblkitr blkitr;
-    xnblkitr_after_end(&blkitr, tx->logger->log_path); //use file size to compute last block idx
-    while (xnblkitr_prev(&blkitr)) {
-        int block_idx = xnblkitr_idx(&blkitr);
-        struct xnpg *page = xnpgr_pin(tx->pager, tx->logger->log_path, block_idx);
-
-        struct xnsltitr itr;
-        xnsltitr_after_end(&itr, page);
-        while (xnsltitr_prev(&itr)) {
-            int off = xnsltitr_offset(&itr);
-            int tx_id;
-            xnlog_read(&tx_id, XNLOGF_TXID, page->buf + off);
-            if (tx_id != tx->id)
-                continue;
-
-            enum xnlogt type;
-            xnlog_read(&type, XNLOGF_TYPE, page->buf + off);
-            if (type == XNLOGT_START) {
-                xnpgr_unpin(page);
-                goto rollback_end;
-            }
-            if (type != XNLOGT_WRITE)
-                continue;
-
-            xntx_undo_write(tx, page->buf + off);
-        }
-
-        xnpgr_unpin(page);
-    }*/
-
-rollback_end:
     xnlgr_write(tx->logger, XNLOGT_ROLLBACK, NULL, tx->id);
+    xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
     return xnstatus_create(true, NULL);
 }
 
@@ -947,7 +905,8 @@ struct xnstatus xntx_delete(struct xntx *tx, const char *key) {
 
 void xnlgr_init(struct xnlgr *logger, const char* log_path) {
     logger->lsn = 0;
-    memcpy(logger->log_path, log_path, strlen(log_path) + 1); //include null terminator
+    xn_strcpy(logger->log_path, log_path);
+    //memcpy(logger->log_path, log_path, strlen(log_path) + 1); //include null terminator
 
     logger->page.pins = 0;
     logger->page.block_idx = 0;
@@ -1112,6 +1071,70 @@ struct xnstatus xnlgr_flush(struct xnlgr *logger) {
     xn_seek(fd, logger->page.block_idx * XN_BLK_SZ, SEEK_SET);
     xn_write(fd, logger->page.buf, XN_BLK_SZ);
     close(fd);
+}
+
+
+void xndb_recover(struct xndb *db) {
+    printf("recovering...\n");
+    struct xntx tx;
+    xndb_init_tx(db, &tx);
+
+    struct xnilist *rb;
+    struct xnilist *cm;
+    xnilist_init(&rb);
+    xnilist_init(&cm);
+
+    struct xnitr itr;
+    xnitr_after_end(&itr, tx.pager, tx.logger->log_path);
+    while (xnitr_prev(&itr)) {
+        printf("looking at a log\n");
+        int slot_off = xnitr_slotoff(&itr);
+        int block_idx = xnitr_blockidx(&itr);
+        struct xnpg *page = xnpgr_pin(tx.pager, tx.logger->log_path, block_idx);
+
+        int tx_id;
+        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+
+        enum xnlogt type;
+        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+
+        if (type == XNLOGT_ROLLBACK) {
+            xnilist_append(rb, tx_id); 
+        } else if (type == XNLOGT_COMMIT) {
+            xnilist_append(cm, tx_id); 
+        } else if (type == XNLOGT_WRITE) {
+            if (xnilist_contains(rb, tx_id)) {
+                xntx_undo_write(&tx, page->buf + slot_off);
+            }
+        }
+
+        xnpgr_unpin(page);
+    }
+
+    //printf("rb length: %d, cm length: %d\n", rb->count, cm->count);
+
+    struct xnitr fitr;
+    xnitr_before_begin(&fitr, tx.pager, tx.logger->log_path);
+    while (xnitr_next(&fitr)) {
+        int slot_off = xnitr_slotoff(&fitr);
+        int block_idx = xnitr_blockidx(&fitr);
+        struct xnpg *page = xnpgr_pin(tx.pager, tx.logger->log_path, block_idx);
+
+        int tx_id;
+        xnlog_read(&tx_id, XNLOGF_TXID, page->buf + slot_off);
+
+        enum xnlogt type;
+        xnlog_read(&type, XNLOGF_TYPE, page->buf + slot_off);
+
+        if (type == XNLOGT_COMMIT) {
+            xntx_redo_write(&tx, page->buf + slot_off);
+        }
+
+        xnpgr_unpin(page);
+    }
+
+    free(rb);
+    free(cm);
 }
 
 void basic_put_test() {
@@ -1293,6 +1316,56 @@ void tx_rollback_test() {
     printf("tx_rollback_test passed\n");
 }
 
+void recovery_test() {
+    //simulating db crashing
+    {
+        struct xndb* db = xndb_init("students", true);
+        struct xnstatus s;
+
+        {
+            struct xntx tx;
+            xndb_init_tx(db, &tx);
+            xntx_put(&tx, "cat", "a");
+            xntx_commit(&tx);
+        }
+
+        /*
+        {
+            struct xntx tx;
+            xndb_init_tx(db, &tx);
+            xntx_put(&tx, "dog", "b");
+            xntx_rollback(&tx);
+        }
+
+        {
+            struct xntx tx;
+            xndb_init_tx(db, &tx);
+            xntx_put(&tx, "turtle", "c");
+            //not commiting nor rolling back
+            //simulating database crashing
+        }*/
+    }
+
+    /*
+    {
+        struct xndb* db = xndb_init("students", true);
+        struct xnstatus s;
+
+        char buf[2];
+        s = xndb_get(db, "cat", buf);
+        assert(s.ok && "recovery test failed");
+
+        s = xndb_get(db, "dog", buf);
+        assert(!s.ok && "recovery test failed");
+
+        s = xndb_get(db, "turtle", buf);
+        assert(!s.ok && "recovery test failed");
+        xndb_free(db);
+    }*/
+
+    printf("recovery_test passed\n");
+}
+
 int main(int argc, char** argv) {
     basic_put_test();
     system("exec rm -rf students");
@@ -1308,5 +1381,7 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     tx_rollback_test();
     system("exec rm -rf students");
+//    recovery_test();
+//    system("exec rm -rf students");
     return 0;
 }
