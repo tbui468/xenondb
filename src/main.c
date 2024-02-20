@@ -89,13 +89,13 @@ struct xnpg {
 };
 
 struct xnpgr {
-    struct xnpg pages[XN_PGR_MAXPGCOUNT];
+    struct xnpg *pages;
 };
 
 struct xnlgr {
-    struct xnpg page;
     int lsn;
     char log_path[256];
+    struct xnpgr *pager;
 };
 
 struct xnwrlg {
@@ -137,7 +137,7 @@ struct xnpg *xnpgr_pin(struct xnpgr *pager, const char* filename, int block_idx)
 
 void xnlog_read(void *result, enum xnlogf fld, char *buf);
 
-void xnlgr_init(struct xnlgr *logger, const char* log_path);
+void xnlgr_init(struct xnlgr *logger, const char* log_path, struct xnpgr *pager);
 struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log, struct xnwrlg *wrlog_data, int tx_id);
 void xndb_init_tx(struct xndb *db, struct xntx *tx);
 struct xnstatus xntx_commit(struct xntx *tx);
@@ -154,7 +154,6 @@ struct xnstatus xndb_delete(struct xndb *db, const char *key);
 void xnpg_write(struct xnpg *page, int off, const void *data, size_t size);
 void xnpg_read(struct xnpg *page, int off, void *data, size_t size);
 
-struct xnstatus xnlgr_flush(struct xnlgr *logger);
 void xntx_redo_write(struct xntx *tx, char *log_buf);
 void xntx_undo_write(struct xntx *tx, char *log_buf);
 
@@ -406,6 +405,7 @@ struct xnpgr *xnpgr_create(const char* data_path) {
     assert(XN_BUCKETS >= XN_PGR_MAXPGCOUNT && "buckets + 1 not greater or equal to max page count");
 
     struct xnpgr *pager = xn_malloc(sizeof(struct xnpgr));
+    pager->pages = xn_memalign(XN_PGR_MAXPGCOUNT * sizeof(struct xnpg));
 
     int fd = xn_open(data_path, O_RDWR, 0666);
     for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
@@ -422,7 +422,6 @@ struct xnpgr *xnpgr_create(const char* data_path) {
 }
 
 void xndb_free(struct xndb* db) {
-    xnlgr_flush(db->logger);
     xnpgr_flush_all(db->pager);
     free((void*)db);
 }
@@ -461,48 +460,53 @@ void xnpg_init_data(struct xnpg *page) {
     xnpg_write(page, xnhdrf_offset(XNHDRF_SLTSTOP), &block_size, sizeof(int));
 }
 
-//TODO: this function is a mess and doesn't work if an existing db is opened - clean it up
-struct xndb* xndb_init(const char* path, bool make_dir) {
-    if (make_dir) {
-        xndb_make_dir(path);
-    }
-
-    if (!xndb_dir_exists(path)) {
-        fprintf(stderr, "xenondb: database directory doesn't exist.");
-        exit(1);
-    }
-
-    struct xndb* db = xn_malloc(sizeof(struct xndb));
-
-    db->tx_id = 0;
-
-    //make directory path
-    xn_strcpy(db->dir_path, path);
-
-    //make data path
-    xn_strcpy(db->data_path, path);
-    xn_strcat(db->data_path, "/data");
-
-    int fd = xn_open(db->data_path, O_CREAT | O_RDWR, 0666);
+void xndb_init_file(const char *path, int blocks) {
+    int fd = xn_open(path, O_CREAT | O_RDWR, 0666);
 
     struct xnpg page;
     xnpg_init_data(&page);
 
-    for (int i = 0; i < XN_BUCKETS; i++) {
+    for (int i = 0; i < blocks; i++) {
         xn_write(fd, page.buf, XN_BLK_SZ);
     }
 
     close(fd);
+}
 
-    db->logger = xn_memalign(sizeof(struct xnlgr));
-    xnpg_init_data(&db->logger->page);
+//TODO: this function is a mess and doesn't work if an existing db is opened - clean it up
+struct xndb* xndb_init(const char* path, bool make_dir) {
+    struct xndb* db = xn_malloc(sizeof(struct xndb));
+    //make directory path
+    xn_strcpy(db->dir_path, path);
+
+    //make data and log paths
+    xn_strcpy(db->data_path, path);
+    xn_strcat(db->data_path, "/data");
 
     xn_strcpy(db->log_path, db->dir_path);
     xn_strcat(db->log_path, "/log");
-    xnlgr_init(db->logger, db->log_path);
+
+    if (!xndb_dir_exists(path)) {
+        if (make_dir) {
+            xndb_make_dir(path);
+            xndb_init_file(db->data_path, XN_BUCKETS);
+            xndb_init_file(db->log_path, 1);
+        } else {
+            fprintf(stderr, "xenondb: database directory doesn't exist.");
+            exit(1);
+        }
+    }
+
+
+    db->tx_id = 0;
 
     //making the pager
     db->pager = xnpgr_create(db->data_path);
+
+    //making logger
+    db->logger = xn_memalign(sizeof(struct xnlgr));
+    //xnpg_init_data(&db->logger->page);
+    xnlgr_init(db->logger, db->log_path, db->pager);
 
     xndb_recover(db);
 
@@ -792,7 +796,6 @@ void xndb_init_tx(struct xndb *db, struct xntx *tx) {
 
 struct xnstatus xntx_commit(struct xntx *tx) {
     xnlgr_write(tx->logger, XNLOGT_COMMIT, NULL, tx->id);
-    xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
     return xnstatus_create(true, NULL);
 }
 
@@ -825,8 +828,6 @@ int xnsltitr_offset(struct xnsltitr *itr) {
 }
 
 struct xnstatus xntx_rollback(struct xntx *tx) {
-    xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
-
     struct xnitr itr;
     xnitr_after_end(&itr, tx->pager, tx->logger->log_path);
     while (xnitr_prev(&itr)) {
@@ -858,7 +859,6 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
     }
 
     xnlgr_write(tx->logger, XNLOGT_ROLLBACK, NULL, tx->id);
-    xnlgr_flush(tx->logger); //TODO unnecessary - could just read the first log page from memory instead of disk
     return xnstatus_create(true, NULL);
 }
 
@@ -894,27 +894,10 @@ struct xnstatus xntx_delete(struct xntx *tx, const char *key) {
     return s;
 }
 
-void xnlgr_init(struct xnlgr *logger, const char* log_path) {
+void xnlgr_init(struct xnlgr *logger, const char* log_path, struct xnpgr *pager) {
     logger->lsn = 0;
     xn_strcpy(logger->log_path, log_path);
-    //memcpy(logger->log_path, log_path, strlen(log_path) + 1); //include null terminator
-
-    logger->page.pins = 0;
-    logger->page.block_idx = 0;
-    int logtop = XN_BLK_SZ;
-    xnpg_write(&logger->page, xnhdrf_offset(XNHDRF_SLTSTOP), &logtop, sizeof(int));
-    xnlgr_flush(logger);
-    
-    //TODO 
-    //if file exists
-    //  load in last block and set
-    //      logger->page.pins = 0;
-    //      logger->page.block_idx = file_size / 4096 ??? (is the file offset going to be 4095?)
-    //else
-    //  create new file and zero it all out
-    //  set header (only logtop field needs to be set)
-    //  logger->page.pins = 0;
-    //  logger->page.block_idx = 0;   
+    logger->pager = pager;
 }
 
 int xnlgr_next_lsn(struct xnlgr *logger) {
@@ -1042,12 +1025,15 @@ struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log_type, struct x
                     wrlog_data->data_size * 2; //old and new data length
     }
 
+    struct xnpg *page = xnpgr_pin(logger->pager, logger->log_path, 0);
+
     int log_off;
-    if (!xnslt_append(&logger->page, log_size, &log_off)) {
+    if (!xnslt_append(page, log_size, &log_off)) {
+        printf("debug error: log record does not fit on one page\n");
         //TODO: add an overflow block to page, and append the record there 
     }
 
-    char *buf = logger->page.buf + log_off;
+    char *buf = page->buf + log_off;
     xnlog_write(buf, XNLOGF_TYPE, &log_type);
     xnlog_write(buf, XNLOGF_TXID, &tx_id);
     xnlog_write(buf, XNLOGF_LSN, &lsn);
@@ -1055,15 +1041,9 @@ struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log_type, struct x
     if (log_type == XNLOGT_WRITE) {
         xnlog_write(buf, XNLOGF_WRLOG, wrlog_data);
     }
-}
 
-struct xnstatus xnlgr_flush(struct xnlgr *logger) {
-    int fd = xn_open(logger->log_path, O_CREAT | O_RDWR | O_DIRECT | O_SYNC, 0666);
-    xn_seek(fd, logger->page.block_idx * XN_BLK_SZ, SEEK_SET);
-    xn_write(fd, logger->page.buf, XN_BLK_SZ);
-    close(fd);
+    xnpgr_unpin(page);
 }
-
 
 void xndb_recover(struct xndb *db) {
     printf("recovering...\n");
