@@ -20,7 +20,7 @@ struct xnilist {
 void xnilist_init(struct xnilist **il);
 void xnilist_append(struct xnilist *il, int n); 
 bool xnilist_contains(struct xnilist *il, int n);
-void *xn_memalign(size_t size);
+void *xn_aligned_alloc(size_t size);
 
 char *xn_strcpy(char *dst, const char *src);
 char *xn_strcat(char* dst, const char *src);

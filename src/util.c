@@ -108,13 +108,13 @@ bool xnilist_contains(struct xnilist *il, int n) {
     return false;
 }
 
-void *xn_memalign(size_t size) {
+void *xn_aligned_alloc(size_t size) {
     struct stat fstat;
     stat("/", &fstat);
     size_t block_size = fstat.st_blksize;
     
     void *ptr;
-    if (posix_memalign(&ptr, block_size, size)) {
+    if (!(ptr = aligned_alloc(block_size, size))) {
         fprintf(stderr, "xenondb: posix_memalign failed\n");
         exit(1);
     }
@@ -128,3 +128,5 @@ char *xn_strcpy(char *dst, const char *src) {
 char *xn_strcat(char* dst, const char *src) {
     strcat(dst, src);
 }
+
+

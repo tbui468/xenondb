@@ -14,6 +14,13 @@
 #include <errno.h>
 #include <assert.h>
 
+#include <sys/socket.h>
+#include <threads.h>
+#include <sys/wait.h>
+#include <netdb.h>
+#include <signal.h>
+#define BACKLOG 10
+
 #include "util.h"
 
 
@@ -25,6 +32,142 @@
 //#define XN_BUCKETS 101
 #define XN_BUCKETS 3
 
+
+void xntcp_send(int sockfd, char* buf, int len) {
+    ssize_t written = 0;
+    ssize_t n;
+
+    while (written < len) {
+        if ((n = send(sockfd, buf + written, len - written, 0)) <= 0) {
+            if (n < 0 && errno == EINTR) //interrupted but not error, so we need to try again
+                n = 0;
+            else {
+                exit(1); //real error
+            }
+        }
+
+        written += n;
+    }
+}
+
+bool xntcp_recv(int sockfd, char* buf, int len) {
+    ssize_t nread = 0;
+    ssize_t n;
+    while (nread < len) {
+        if ((n = recv(sockfd, buf + nread, len - nread, 0)) < 0) {
+            if (n < 0 && errno == EINTR)
+                n = 0;
+            else
+                exit(1);
+        } else if (n == 0) {
+            //connection ended
+            return false;
+        }
+
+        nread += n;
+    }
+
+    return true;
+}
+
+int xntcp_accept(int listenerfd) {
+    socklen_t sin_size = sizeof(struct sockaddr_storage);
+    struct sockaddr_storage their_addr;
+    int new_fd = accept(listenerfd, (struct sockaddr*)&their_addr, &sin_size);
+
+    return new_fd;
+}
+
+int xntcp_handle_client(void* args) {
+    thrd_t t = thrd_current();
+    thrd_detach(t);
+
+    int conn_fd = *((int*)args);
+    free(args);
+    printf("client connected on fd: %d\n", conn_fd);
+    int n = 42;
+    xntcp_send(conn_fd, (char*)&n, sizeof(int));
+    //while(true)
+    //    ;
+    /*
+    struct VdbThreadContext c;
+    c.conn_fd = *((int*)args);
+    c.output = vdbbytelist_init();
+
+    free(args, sizeof(int));
+
+    vdbtcp_handle_client(&c); //loops here
+
+    vdbbytelist_free(c.output);*/
+
+    close(conn_fd);
+    return 0;
+}
+
+void sigchld_handler(int s) {
+    s = s; //silence warning
+
+    int saved_errno = errno;
+
+    while (waitpid(-1, NULL, WNOHANG) > 0);
+
+    errno = saved_errno;
+}
+
+
+int xntcp_listen(const char* port) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE; //use local ip address
+
+    struct addrinfo* servinfo;
+    if (getaddrinfo(NULL, port, &hints, &servinfo) != 0) {
+        return 1;
+    }
+
+    //loop through results for getaddrinfo and bind to first one we can
+    struct addrinfo* p;
+    int sockfd;
+    int yes = 1;
+    for (p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
+            continue;
+
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+            exit(1);
+
+        if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            continue;
+        }
+
+        break;
+    }
+
+    freeaddrinfo(servinfo);
+
+    //failed to bind
+    if (p == NULL) {
+        exit(1);
+    }
+
+    if (listen(sockfd, BACKLOG) == -1) {
+        exit(1);
+    }
+
+    //what was this for again?
+    struct sigaction sa;
+    sa.sa_handler = sigchld_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        exit(1);
+    }
+
+    return sockfd;
+}
 
 struct xnstatus {
     bool ok;
@@ -164,6 +307,8 @@ int xnsltitr_offset(struct xnsltitr *itr);
 int xnrecf_offset(enum xnrecf fld, int rec_off);
 
 void xndb_recover(struct xndb *db);
+
+void xnserver_start(const char *dbname, const char *port, bool makedir);
 
 int xnfile_block_count(const char *filename) {
     int fd = xn_open(filename, O_RDWR, 0666);
@@ -403,7 +548,7 @@ struct xnpgr *xnpgr_create(const char* data_path) {
     assert(XN_BUCKETS >= XN_PGR_MAXPGCOUNT && "buckets + 1 not greater or equal to max page count");
 
     struct xnpgr *pager = xn_malloc(sizeof(struct xnpgr));
-    pager->pages = xn_memalign(XN_PGR_MAXPGCOUNT * sizeof(struct xnpg));
+    pager->pages = xn_aligned_alloc(XN_PGR_MAXPGCOUNT * sizeof(struct xnpg));
 
     int fd = xn_open(data_path, O_RDWR, 0666);
     for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
@@ -502,8 +647,7 @@ struct xndb* xndb_init(const char* path, bool make_dir) {
     db->pager = xnpgr_create(db->data_path);
 
     //making logger
-    db->logger = xn_memalign(sizeof(struct xnlgr));
-    //xnpg_init_data(&db->logger->page);
+    db->logger = xn_aligned_alloc(sizeof(struct xnlgr));
     xnlgr_init(db->logger, db->log_path, db->pager);
 
     xndb_recover(db);
@@ -1068,6 +1212,25 @@ void xndb_recover(struct xndb *db) {
     free(cm);
 }
 
+
+void xnserver_start(const char *dbname, const char *port, bool makedir) {
+    int listener_fd = xntcp_listen(port);
+
+    //main accept loop
+    while (true) {
+        int conn_fd = xntcp_accept(listener_fd);
+        if (conn_fd == -1)
+            continue;
+
+
+        int* ptr = xn_malloc(sizeof(int));
+        *ptr = conn_fd;
+
+        thrd_t t;
+        thrd_create(&t, &xntcp_handle_client, ptr);
+    } 
+}
+
 void basic_put_test() {
     struct xndb* db = xndb_init("students", true);
 
@@ -1299,6 +1462,17 @@ void recovery_test() {
     printf("recovery_test passed\n");
 }
 
+void server_test() {
+    const char *port = "3000";
+    xnserver_start("students", port, true);
+
+    ///*client_test*/
+    //struct xnclient client;
+    //xnclient_connect(&client, "3000");
+    //xnclient_put(&client, "cat", "a");
+    //xnclient_disconnect(&client);
+}
+
 int main(int argc, char** argv) {
     basic_put_test();
     system("exec rm -rf students");
@@ -1316,5 +1490,6 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     recovery_test();
     system("exec rm -rf students");
+    server_test();
     return 0;
 }
