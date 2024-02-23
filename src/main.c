@@ -1,5 +1,6 @@
-//for O_DIRECT
 #define _GNU_SOURCE
+
+#include "util.h"
 
 #include <sys/stat.h>
 #include <stdio.h>
@@ -14,160 +15,20 @@
 #include <errno.h>
 #include <assert.h>
 
-#include <sys/socket.h>
-#include <threads.h>
-#include <sys/wait.h>
-#include <netdb.h>
-#include <signal.h>
-#define BACKLOG 10
-
-#include "util.h"
+#include <pthread.h>
 
 
 #define XN_BLK_SZ 4096
 #define XN_BLKHDR_SZ 32
 
-#define XN_PGR_MAXPGCOUNT 2
+//#define XN_PGR_MAXPGCOUNT 2
+#define XN_PGR_MAXPGCOUNT 5
 
 //#define XN_BUCKETS 101
-#define XN_BUCKETS 3
+#define XN_BUCKETS 5
 
 
-void xntcp_send(int sockfd, char* buf, int len) {
-    ssize_t written = 0;
-    ssize_t n;
-
-    while (written < len) {
-        if ((n = send(sockfd, buf + written, len - written, 0)) <= 0) {
-            if (n < 0 && errno == EINTR) //interrupted but not error, so we need to try again
-                n = 0;
-            else {
-                exit(1); //real error
-            }
-        }
-
-        written += n;
-    }
-}
-
-bool xntcp_recv(int sockfd, char* buf, int len) {
-    ssize_t nread = 0;
-    ssize_t n;
-    while (nread < len) {
-        if ((n = recv(sockfd, buf + nread, len - nread, 0)) < 0) {
-            if (n < 0 && errno == EINTR)
-                n = 0;
-            else
-                exit(1);
-        } else if (n == 0) {
-            //connection ended
-            return false;
-        }
-
-        nread += n;
-    }
-
-    return true;
-}
-
-int xntcp_accept(int listenerfd) {
-    socklen_t sin_size = sizeof(struct sockaddr_storage);
-    struct sockaddr_storage their_addr;
-    int new_fd = accept(listenerfd, (struct sockaddr*)&their_addr, &sin_size);
-
-    return new_fd;
-}
-
-int xntcp_handle_client(void* args) {
-    thrd_t t = thrd_current();
-    thrd_detach(t);
-
-    int conn_fd = *((int*)args);
-    free(args);
-    printf("client connected on fd: %d\n", conn_fd);
-    int n = 42;
-    xntcp_send(conn_fd, (char*)&n, sizeof(int));
-    //while(true)
-    //    ;
-    /*
-    struct VdbThreadContext c;
-    c.conn_fd = *((int*)args);
-    c.output = vdbbytelist_init();
-
-    free(args, sizeof(int));
-
-    vdbtcp_handle_client(&c); //loops here
-
-    vdbbytelist_free(c.output);*/
-
-    close(conn_fd);
-    return 0;
-}
-
-void sigchld_handler(int s) {
-    s = s; //silence warning
-
-    int saved_errno = errno;
-
-    while (waitpid(-1, NULL, WNOHANG) > 0);
-
-    errno = saved_errno;
-}
-
-
-int xntcp_listen(const char* port) {
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; //use local ip address
-
-    struct addrinfo* servinfo;
-    if (getaddrinfo(NULL, port, &hints, &servinfo) != 0) {
-        return 1;
-    }
-
-    //loop through results for getaddrinfo and bind to first one we can
-    struct addrinfo* p;
-    int sockfd;
-    int yes = 1;
-    for (p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
-            continue;
-
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
-            exit(1);
-
-        if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sockfd);
-            continue;
-        }
-
-        break;
-    }
-
-    freeaddrinfo(servinfo);
-
-    //failed to bind
-    if (p == NULL) {
-        exit(1);
-    }
-
-    if (listen(sockfd, BACKLOG) == -1) {
-        exit(1);
-    }
-
-    //what was this for again?
-    struct sigaction sa;
-    sa.sa_handler = sigchld_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-        exit(1);
-    }
-
-    return sockfd;
-}
+pthread_rwlock_t log_lock;
 
 struct xnstatus {
     bool ok;
@@ -225,6 +86,7 @@ struct xnpg {
     int pins;
     const char *filename;
     int block_idx;
+    pthread_rwlock_t lock;
 
     //used in freelist
     int cur;
@@ -254,6 +116,7 @@ struct xntx {
     struct xnpgr *pager;
     struct xnlgr *logger;
     const char *data_path;
+    struct xnpg *page; //TODO test to store page when running tx - should really store an array or linked list of pages
 };
 
 struct xnsltitr {
@@ -305,14 +168,38 @@ bool xnsltitr_next(struct xnsltitr *itr);
 int xnsltitr_offset(struct xnsltitr *itr);
 
 int xnrecf_offset(enum xnrecf fld, int rec_off);
+int xnhdrf_offset(enum xnhdrf fld);
 
 void xndb_recover(struct xndb *db);
 
-void xnserver_start(const char *dbname, const char *port, bool makedir);
-
 int xnfile_block_count(const char *filename) {
+    xn_rwlock_xlock(&log_lock);
     int fd = xn_open(filename, O_RDWR, 0666);
-    return xn_seek(fd, 0, SEEK_END) / XN_BLK_SZ;
+    int count = xn_seek(fd, 0, SEEK_END) / XN_BLK_SZ;
+    close(fd);
+    xn_rwlock_unlock(&log_lock);
+    return count;
+}
+
+int xnfile_append_block(const char *filename) {
+    int block_count = xnfile_block_count(filename);
+
+    xn_rwlock_xlock(&log_lock);
+    int fd = xn_open(filename, O_RDWR, 0666);
+    xn_seek(fd, XN_BLK_SZ * block_count, SEEK_SET);
+    char *buf = malloc(XN_BLK_SZ);
+    memset(buf, 0, XN_BLK_SZ);
+    xn_write(fd, buf, XN_BLK_SZ);
+    free(buf);
+    
+    xn_seek(fd, XN_BLK_SZ * block_count, SEEK_SET);
+    xn_seek(fd, xnhdrf_offset(XNHDRF_SLTSTOP), SEEK_CUR);
+    int block_size = XN_BLK_SZ;
+    xn_write(fd, &block_size, sizeof(int));
+
+    close(fd);
+    xn_rwlock_unlock(&log_lock);
+    return block_count;
 }
 
 void xnblkitr_after_end(struct xnblkitr *itr, const char *filename) {
@@ -555,6 +442,7 @@ struct xnpgr *xnpgr_create(const char* data_path) {
         pager->pages[i].pins = 0;
         pager->pages[i].block_idx = i;
         pager->pages[i].filename = data_path;
+        xn_rwlock_init(&pager->pages[i].lock);
         
         xn_seek(fd, i * XN_BLK_SZ, SEEK_SET);
         xn_read(fd, pager->pages[i].buf, XN_BLK_SZ);
@@ -566,7 +454,13 @@ struct xnpgr *xnpgr_create(const char* data_path) {
 
 void xndb_free(struct xndb* db) {
     xnpgr_flush_all(db->pager);
+    for (int i = 0; i < XN_PGR_MAXPGCOUNT; i++) {
+        xn_rwlock_destroy(&db->pager->pages[i].lock);
+    }
+    free(db->pager->pages);
+    free(db->pager);
     free((void*)db);
+    xn_rwlock_destroy(&log_lock);
 }
 
 void xndb_make_dir(const char *name) {
@@ -618,6 +512,7 @@ void xndb_init_file(const char *path, int blocks) {
 
 //TODO: this function is a mess and doesn't work if an existing db is opened - clean it up
 struct xndb* xndb_init(const char* path, bool make_dir) {
+    xn_rwlock_init(&log_lock);
     struct xndb* db = xn_malloc(sizeof(struct xndb));
     //make directory path
     xn_strcpy(db->dir_path, path);
@@ -933,11 +828,16 @@ void xndb_init_tx(struct xndb *db, struct xntx *tx) {
     tx->pager = db->pager;
     tx->logger = db->logger;
     tx->data_path = db->data_path;
+    tx->page = NULL;
     xnlgr_write(db->logger, XNLOGT_START, NULL, tx->id);
 }
 
 struct xnstatus xntx_commit(struct xntx *tx) {
     xnlgr_write(tx->logger, XNLOGT_COMMIT, NULL, tx->id);
+    if (tx->page) {
+        xn_rwlock_unlock(&tx->page->lock);
+        xnpgr_unpin(tx->page);
+    }
     return xnstatus_create(true, NULL);
 }
 
@@ -1001,38 +901,48 @@ struct xnstatus xntx_rollback(struct xntx *tx) {
     }
 
     xnlgr_write(tx->logger, XNLOGT_ROLLBACK, NULL, tx->id);
+    if (tx->page) {
+        xn_rwlock_unlock(&tx->page->lock);
+        xnpgr_unpin(tx->page);
+    }
     return xnstatus_create(true, NULL);
 }
 
 struct xnstatus xntx_put(struct xntx *tx, const char *key, const char *value) {
     int block_idx = xndb_get_hash_bucket(key);
-    //TODO get exclusive lock here using block_idx as lock identifier
-    //eg, xncnr_acquire_xlock(tx->concur, block_idx);
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
+
+    xn_rwlock_xlock(&page->lock);
     struct xnstatus s = xntx_do_put(tx, page, key, value);
-    xnpgr_unpin(page);
-    //TODO release x-lock
-    //eg, xncnr_release_xlock(tx->concur, block_idx);
+    tx->page = page;
+    /*
+    xn_rwlock_unlock(&page->lock);
+
+    xnpgr_unpin(page);*/
     return s;
 }
 struct xnstatus xntx_get(struct xntx *tx, const char *key, char *value) {
     int block_idx = xndb_get_hash_bucket(key);
-    //TODO get shared lock here using block_idx as lock identifier
-    //eg, xncnr_slock(tx->concur, block_idx);
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
-    //TODO write to log here??
+
+    xn_rwlock_slock(&page->lock);
     struct xnstatus s = xntx_do_get(tx, page, key, value);
+    xn_rwlock_unlock(&page->lock);
+
     xnpgr_unpin(page);
-    //TODO release s-lock
     return s;
 }
 struct xnstatus xntx_delete(struct xntx *tx, const char *key) {
     int block_idx = xndb_get_hash_bucket(key);
-    //TODO get exclusive lock here using block_idx as lock identifier
     struct xnpg *page = xnpgr_pin(tx->pager, tx->data_path, block_idx);
+
+    xn_rwlock_xlock(&page->lock);
     struct xnstatus s = xntx_do_delete(tx, page, key);
-    xnpgr_unpin(page);
-    //TODO release x-lock
+    tx->page = page;
+    /*
+    xn_rwlock_unlock(&page->lock);
+
+    xnpgr_unpin(page);*/
     return s;
 }
 
@@ -1130,15 +1040,21 @@ struct xnstatus xnlgr_write(struct xnlgr *logger, enum xnlogt log_type, struct x
         log_size += wrlog_size;
     }
 
-    struct xnpg *page = xnpgr_pin(logger->pager, logger->log_path, 0);
+    int last_block = xnfile_block_count(logger->log_path) - 1;
+    struct xnpg *page = xnpgr_pin(logger->pager, logger->log_path, last_block);
 
     int log_off;
     if (!xnslt_append(page, log_size, &log_off)) {
-        printf("debug error: log record does not fit on one page\n");
-        //TODO: add an overflow block to page, and append the record there 
+        xnpgr_unpin(page);
+        last_block = xnfile_append_block(logger->log_path);
+        //printf("last block: %d\n", last_block);
+        page = xnpgr_pin(logger->pager, logger->log_path, last_block);
+        xnslt_append(page, log_size, &log_off);
+        //printf("appending new log page\n");
     }
-
+    //printf("log_off: %d\n", log_off);
     char *buf = page->buf + log_off;
+    //printf("log field 'type' offset: %d\n", xnlogf_offset(XNLOGF_TYPE, log_off));
     xnpg_write(page, xnlogf_offset(XNLOGF_TYPE, log_off), &log_type, sizeof(enum xnlogt));
     xnpg_write(page, xnlogf_offset(XNLOGF_TXID, log_off), &tx_id, sizeof(int));
     xnpg_write(page, xnlogf_offset(XNLOGF_LSN, log_off), &lsn, sizeof(int));
@@ -1213,23 +1129,6 @@ void xndb_recover(struct xndb *db) {
 }
 
 
-void xnserver_start(const char *dbname, const char *port, bool makedir) {
-    int listener_fd = xntcp_listen(port);
-
-    //main accept loop
-    while (true) {
-        int conn_fd = xntcp_accept(listener_fd);
-        if (conn_fd == -1)
-            continue;
-
-
-        int* ptr = xn_malloc(sizeof(int));
-        *ptr = conn_fd;
-
-        thrd_t t;
-        thrd_create(&t, &xntcp_handle_client, ptr);
-    } 
-}
 
 void basic_put_test() {
     struct xndb* db = xndb_init("students", true);
@@ -1462,16 +1361,51 @@ void recovery_test() {
     printf("recovery_test passed\n");
 }
 
-void server_test() {
-    const char *port = "3000";
-    xnserver_start("students", port, true);
-
-    ///*client_test*/
-    //struct xnclient client;
-    //xnclient_connect(&client, "3000");
-    //xnclient_put(&client, "cat", "a");
-    //xnclient_disconnect(&client);
+void *write_record(void *arg) {
+    for (int i = 0; i < 300; i++) {
+        struct xntx tx;
+        xndb_init_tx((struct xndb*)arg, &tx);
+        xntx_put(&tx, "cat", "y");
+        xntx_rollback(&tx);
+    }
 }
+
+void *read_record(void *arg) {
+    char buf[2];
+
+    for (int i = 0; i < 300; i++) {
+        struct xntx tx;
+        xndb_init_tx((struct xndb*)arg, &tx);
+        xntx_get(&tx, "cat", buf);
+        assert(*buf == 'x');
+        xntx_commit(&tx);
+    }
+}
+
+void read_committed_test() {
+    struct xndb* db = xndb_init("students", true);
+    struct xnstatus s;
+
+    {
+        struct xntx tx;
+        xndb_init_tx(db, &tx);
+        xntx_put(&tx, "cat", "x");
+        xntx_commit(&tx);
+    }
+
+    pthread_t writer, reader;
+
+    pthread_create(&writer, NULL, write_record, db);
+    pthread_create(&reader, NULL, read_record, db);
+
+    pthread_join(writer, NULL);
+    pthread_join(reader, NULL);
+
+    xndb_free(db);
+
+    printf("read_committed_test passed\n");
+}
+
 
 int main(int argc, char** argv) {
     basic_put_test();
@@ -1490,6 +1424,7 @@ int main(int argc, char** argv) {
     system("exec rm -rf students");
     recovery_test();
     system("exec rm -rf students");
-    server_test();
+    read_committed_test();
+    system("exec rm -rf students");
     return 0;
 }

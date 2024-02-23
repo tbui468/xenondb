@@ -52,7 +52,7 @@ void xn_write(int fd, const void* buf, size_t count) {
 int xn_open(const char* path, int flags, mode_t mode) {
     int fd;
     if ((fd = open(path, flags, mode)) == -1) {
-        fprintf(stderr, "xenondb: open failed.");
+        fprintf(stderr, "xenondb: open failed: %s\n", strerror(errno));
         exit(1);
     }
     return fd;
@@ -129,4 +129,35 @@ char *xn_strcat(char* dst, const char *src) {
     strcat(dst, src);
 }
 
+void xn_rwlock_init(pthread_rwlock_t *lock) {
+    if (pthread_rwlock_init(lock, NULL)) {
+        fprintf(stderr, "xenondb: pthread_rwlock_init failed\n");
+        exit(1);
+    }
+}
 
+void xn_rwlock_destroy(pthread_rwlock_t *lock) {
+    if (pthread_rwlock_destroy(lock)) {
+        fprintf(stderr, "xenondb: pthread_rwlock_destroy failed\n");
+        exit(1);
+    }
+}
+void xn_rwlock_unlock(pthread_rwlock_t *lock) {
+    if(pthread_rwlock_unlock(lock)) {
+        fprintf(stderr, "xenondb: pthread_rwlock_unlock failed\n");
+        exit(1);
+    }
+}
+
+void xn_rwlock_slock(pthread_rwlock_t *lock) {
+    if (pthread_rwlock_rdlock(lock)) {
+        fprintf(stderr, "xenondb: pthread_rwlock_rdlock failed\n");
+        exit(1);
+    }
+}
+void xn_rwlock_xlock(pthread_rwlock_t *lock) {
+    if (pthread_rwlock_wrlock(lock)) {
+        fprintf(stderr, "xenondb: pthread_rwlock_wrlock failed\n");
+        exit(1);
+    }
+}
