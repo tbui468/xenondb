@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 
 #include "util.h"
+#include "common.h"
+#include "file.h"
 
 #include <sys/stat.h>
 #include <stdio.h>
@@ -27,13 +29,13 @@
 //#define XN_BUCKETS 101
 #define XN_BUCKETS 5
 
-
-pthread_rwlock_t log_lock;
-
 struct xnstatus {
     bool ok;
-    char* msg;
+    char *msg;
 };
+
+
+pthread_rwlock_t log_lock;
 
 enum xnlogt {
     XNLOGT_START,
@@ -1408,6 +1410,40 @@ void read_committed_test() {
 
 
 int main(int argc, char** argv) {
+    struct xnfile *handle;
+    if(!xnfile_create("test", false, &handle)) {
+        printf("%s\n", xnerr_tostring());
+    }
+
+    if (!xnfile_set_size(handle, 4096))
+        printf("%s\n", xnerr_tostring());
+
+    const char *msg1 = "hello ";
+    const char *msg2 = "world!\n";
+    if (!xnfile_write(handle, msg1, 0, strlen(msg1) + 1)) {
+        printf("%s\n", xnerr_tostring());
+    }
+    if (!xnfile_write(handle, msg2, 1024, strlen(msg2) + 1)) {
+        printf("%s\n", xnerr_tostring());
+    }
+    if (!xnfile_close(handle)) {
+        printf("%s\n", xnerr_tostring());
+    }
+
+    if(!xnfile_create("test", false, &handle)) {
+        printf("%s\n", xnerr_tostring());
+    }
+    char buf1[16];
+    char buf2[16];
+    if (!xnfile_read(handle, buf1, 0, strlen(msg1) + 1))
+        printf("%s\n", xnerr_tostring());
+    if (!xnfile_read(handle, buf2, 1024, strlen(msg2) + 1))
+        printf("%s\n", xnerr_tostring());
+    printf("%s%s", buf1, buf2);
+    if (!xnfile_close(handle)) {
+        printf("%s\n", xnerr_tostring());
+    }
+
     basic_put_test();
     system("exec rm -rf students");
     basic_get_test();
