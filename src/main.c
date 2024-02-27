@@ -12,6 +12,11 @@
 #include "common.h"
 #include "file.h"
 
+
+static void xn_cleanup_free(void *p) {
+    free(*(void**) p);
+}
+
 enum xntxmode {
     XNTXMODE_RD,
     XNTXMODE_WR
@@ -61,7 +66,7 @@ uint8_t *xnpg_serialize(struct xnpg *page) {
 }
 
 struct xnentry {
-    uint8_t *key;
+    struct xnpg page;
     uint8_t *val;
     struct xnentry *next;
 };
@@ -83,6 +88,15 @@ __attribute__((warn_unused_result)) bool xntbl_create(struct xntbl **out_tbl) {
 }
 
 void xntbl_free(struct xntbl *tbl) {
+    for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
+        struct xnentry *cur = tbl->entries[i];
+        while (cur) {
+            struct xnentry *next = cur->next;
+            free(cur->val);
+            free(cur);
+            cur = next;
+        }
+    }
     free(tbl->entries);
     free(tbl);
 }
@@ -97,13 +111,19 @@ static uint32_t xn_hash(const uint8_t *buf, int length) {
     return hash;
 }
 
-uint8_t* xntbl_find(struct xntbl *tbl, uint8_t *key) {
+uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
+    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
+    key = xnpg_serialize(page);
+
     int length = strlen((char*)key);
     uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;
 
     struct xnentry* cur = tbl->entries[bucket];
     while (cur) {
-        if (strcmp((char*)key, (char*)(cur->key)) == 0)
+        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
+        cur_key = xnpg_serialize(&cur->page);
+
+        if (strcmp((char*)key, (char*)(cur_key)) == 0)
             return cur->val;
         cur = cur->next;
     }
@@ -111,13 +131,19 @@ uint8_t* xntbl_find(struct xntbl *tbl, uint8_t *key) {
     return NULL;
 }
 
-__attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, uint8_t *key, uint8_t *val) {
+__attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
+    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
+    key = xnpg_serialize(page);
+
     int length = strlen((char*)key);
     uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;
 
     struct xnentry* cur = tbl->entries[bucket];
     while (cur) {
-        if (strcmp((char*)key, (char*)(cur->key)) == 0) {
+        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
+        cur_key = xnpg_serialize(&cur->page);
+
+        if (strcmp((char*)key, (char*)(cur_key)) == 0) {
             cur->val = val;
             return true;
         }
@@ -130,7 +156,7 @@ __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, uint8_t
     struct xnentry* entry;
     xn_ensure((entry = malloc(sizeof(struct xnentry))) != NULL);
     entry->next = head;
-    entry->key = key;
+    entry->page = *page;
     entry->val = val;
     tbl->entries[bucket] = entry;
 
@@ -161,6 +187,14 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
 }
 
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
+    for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
+        struct xnentry *cur = tx->mod_pgs->entries[i];
+        while (cur) {
+            xn_ensure(xnfile_write(cur->page.file_handle, cur->val, 0, XNPG_SZ)); 
+            cur = cur->next;
+        }
+    }
+    //TODO lock file pages to prevent readers from reading partial data???
     //get a xlock on all modified page to prevent readers from reading partial data
     //write logs to durable storage, and sync
     if (tx->mode == XNTXMODE_WR)
@@ -170,19 +204,24 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     return xn_ok();
 }
 
-static void xn_cleanup_free(void *p) {
-    free(*(void**) p);
+__attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
+    //TODO lock file pages to prevent readers from reading partial data???
+    //get a xlock on all modified page to prevent readers from reading partial data
+    //write logs to durable storage, and sync
+    if (tx->mode == XNTXMODE_WR)
+        xn_ensure(pthread_rwlock_unlock(tx->lock) == 0);
+    xntbl_free(tx->mod_pgs);
+    free(tx);
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
     uint8_t *cpy;
-    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
-    key = xnpg_serialize(page);
 
-    if (!(cpy = xntbl_find(tx->mod_pgs, key))) {
+    if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
         xn_ensure((cpy = malloc(XNPG_SZ)) != NULL);
         xn_ensure(xnfile_read(page->file_handle, cpy, 0, XNPG_SZ));
-        xn_ensure(xntbl_insert(tx->mod_pgs, key, cpy));
+        xn_ensure(xntbl_insert(tx->mod_pgs, page, cpy));
     }
 
     memcpy(cpy + offset, buf, size);
@@ -191,10 +230,8 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
 
 __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
     uint8_t *cpy;
-    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
-    key = xnpg_serialize(page);
 
-    if ((cpy = xntbl_find(tx->mod_pgs, key))) {
+    if ((cpy = xntbl_find(tx->mod_pgs, page))) {
         memcpy(buf, cpy + offset, size);
     } else {
         xn_ensure(xnfile_read(page->file_handle, buf, offset, size));
@@ -229,24 +266,34 @@ int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
     return page_idx / 8;
 }
 
+__attribute__((warn_unused_result)) bool xntx_free_page(struct xntx *tx, struct xnpg page) {
+    struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
+
+    //set bit to 'free'
+    uint8_t byte;
+    xn_ensure(xntx_read(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t)));
+    byte &= ~(1 << (page.idx % 8));
+    xn_ensure(xntx_write(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t)));
+    return xn_ok();
+}
+
 __attribute__((warn_unused_result)) bool xntx_allocate_page(struct xntx *tx, struct xnpg *page) {
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
 
-    struct xnpg new_page;
-    xn_ensure(xntx_find_free_page(tx, &meta_page, &new_page));
-    printf("new page idx: %ld\n", new_page.idx);
+    xn_ensure(xntx_find_free_page(tx, &meta_page, page));
+    printf("new page idx: %ld\n", page->idx);
 
     //zero out new page data
     __attribute__((cleanup(xn_cleanup_free))) uint8_t *buf;
     xn_ensure((buf = malloc(XNPG_SZ)) != NULL);
     memset(buf, 0, XNPG_SZ);
-    xn_ensure(xntx_write(tx, &new_page, buf, 0, XNPG_SZ));
+    xn_ensure(xntx_write(tx, page, buf, 0, XNPG_SZ));
 
     //set bit to 'used'
     uint8_t byte;
-    xn_ensure(xntx_read(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(new_page.idx), sizeof(uint8_t)));
-    byte |= 1 << (new_page.idx % 8);
-    xn_ensure(xntx_write(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(new_page.idx), sizeof(uint8_t)));
+    xn_ensure(xntx_read(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
+    byte |= 1 << (page->idx % 8);
+    xn_ensure(xntx_write(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
     return xn_ok();
 }
 
@@ -255,18 +302,32 @@ int main(int argc, char** argv) {
     if (!xndb_create("students", &db))
         printf("failed\n");
 
-    struct xntx *tx;
-    if (!xntx_create(db, XNTXMODE_WR, &tx))
-        printf("failed\n");
+    {
+        struct xntx *tx;
+        if (!xntx_create(db, XNTXMODE_WR, &tx))
+            printf("failed\n");
+        struct xnpg page;
+        if (!xntx_allocate_page(tx, &page))
+            printf("failed\n");
+        if (!xntx_free_page(tx, page))
+            printf("failed\n");
+        if (!xntx_allocate_page(tx, &page))
+            printf("failed\n");
+        if (!xntx_commit(tx))
+            printf("failed\n");
+    }
 
-    struct xnpg page;
-    if (!xntx_allocate_page(tx, &page))
-        printf("failed\n");
-    //first page should have index 1, and second page index 2
-    //xntx_free_page(txt, "data", 1);
+    {
+        struct xntx *tx;
+        if (!xntx_create(db, XNTXMODE_WR, &tx))
+            printf("failed\n");
+        struct xnpg page;
+        if (!xntx_allocate_page(tx, &page))
+            printf("failed\n");
 
-    if (!xntx_commit(tx))
-        printf("failed\n");
+        if (!xntx_rollback(tx))
+            printf("failed\n");
+    }
 
     if (!xndb_free(db))
         printf("failed\n");
