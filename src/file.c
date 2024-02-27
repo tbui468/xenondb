@@ -32,8 +32,10 @@ __attribute__((warn_unused_result)) bool xnfile_create(const char *relpath, bool
     strcpy(handle->path, buf);
 
     int flags = O_CREAT | O_RDWR;
-    if (direct)
+    if (direct) {
         flags |= O_DIRECT;
+        flags |= O_DSYNC;
+    }
 
     xn_ensure((handle->fd = open(handle->path, flags, S_IRUSR | S_IWUSR)) != -1);
 
