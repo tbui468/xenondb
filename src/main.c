@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <sys/mman.h>
 
 #include "common.h"
 #include "file.h"
@@ -42,12 +43,16 @@ __attribute__((warn_unused_result)) bool xntbl_create(struct xntbl **out_tbl) {
     return true;
 }
 
-void xntbl_free(struct xntbl *tbl) {
+void xntbl_free(struct xntbl *tbl, bool unmap) {
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tbl->entries[i];
         while (cur) {
             struct xnentry *next = cur->next;
-            free(cur->val);
+            if (unmap) {
+                xn_ensure((munmap(cur->val, XNPG_SZ)) == 0);
+            } else {
+                free(cur->val);
+            }
             free(cur);
             cur = next;
         }
@@ -143,7 +148,7 @@ __attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
     xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
     xn_ensure(xnfile_close(db->file_handle));
     //TODO unmap pages before freeing page table
-    xntbl_free(db->pg_tbl);
+    xntbl_free(db->pg_tbl, true);
     free(db);
     return xn_ok();
 }
@@ -185,6 +190,7 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
         struct xnentry *cur = tx->mod_pgs->entries[i];
         while (cur) {
             page.idx = cur->pg_idx;
+            //TODO should this use mmap and mprotect???
             xn_ensure(xnpg_write(&page, cur->val));
             cur = cur->next;
         }
@@ -194,7 +200,7 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
 
     //TODO free local buffers before freeing modded page table
-    xntbl_free(tx->mod_pgs);
+    xntbl_free(tx->mod_pgs, false);
     free(tx);
     return xn_ok();
 }
@@ -205,7 +211,7 @@ __attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
 
     //TODO free local buffers before freeing modded page table
-    xntbl_free(tx->mod_pgs);
+    xntbl_free(tx->mod_pgs, false);
     free(tx);
     return xn_ok();
 }
@@ -237,14 +243,9 @@ __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg 
 
     uint8_t *ptr;
     if (!(ptr = xntbl_find(tx->db->pg_tbl, page))) {
-        xn_ensure((ptr = malloc(XNPG_SZ)) != NULL);
-        xn_ensure(xnpg_read(page, ptr));
+        xn_ensure((ptr = mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, tx->db->file_handle->fd, page->idx * XNPG_SZ)) != MAP_FAILED);
         xn_ensure(xntbl_insert(tx->db->pg_tbl, page, ptr));
     }
-
-    //TODO need to update the potentially stale version in cache
-    //this should not be necessary once we switch over to mmapped version
-    xn_ensure(xnpg_read(page, ptr));
 
     memcpy(buf, ptr + offset, size);
 
