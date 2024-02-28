@@ -186,11 +186,21 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
     return xn_ok();
 }
 
+__attribute__((warn_unused_result)) bool xnpg_write(struct xnpg *page, const uint8_t *buf) {
+    xn_ensure(xnfile_write(page->file_handle, buf, 0, XNPG_SZ)); 
+    return true;
+}
+
+__attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *buf) {
+    xn_ensure(xnfile_read(page->file_handle, buf, 0, XNPG_SZ));
+    return true;
+}
+
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tx->mod_pgs->entries[i];
         while (cur) {
-            xn_ensure(xnfile_write(cur->page.file_handle, cur->val, 0, XNPG_SZ)); 
+            xn_ensure(xnpg_write(&cur->page, cur->val));
             cur = cur->next;
         }
     }
@@ -220,7 +230,7 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
 
     if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
         xn_ensure((cpy = malloc(XNPG_SZ)) != NULL);
-        xn_ensure(xnfile_read(page->file_handle, cpy, 0, XNPG_SZ));
+        xn_ensure(xnpg_read(page, cpy));
         xn_ensure(xntbl_insert(tx->mod_pgs, page, cpy));
     }
 
