@@ -5,6 +5,7 @@
 #define XNTBL_MAX_BUCKETS 128
 #define XNPG_SZ 4096
 #include <stdlib.h> //free
+#include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -13,57 +14,11 @@
 #include "file.h"
 
 
-static void xn_cleanup_free(void *p) {
-    free(*(void**) p);
-}
-
-enum xntxmode {
-    XNTXMODE_RD,
-    XNTXMODE_WR
-};
-
-//TODO move to own files later
-struct xndb {
-    pthread_rwlock_t wrtx_lock;
-    struct xnfile *file_handle;
-};
-
-__attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struct xndb **out_db) {
-    struct xndb *db;
-    xn_ensure((db = malloc(sizeof(struct xndb))) != NULL);
-    xn_ensure(pthread_rwlock_init(&db->wrtx_lock, NULL) == 0);
-
-    xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
-    xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 8));
-    uint8_t buf = 1;
-    xn_ensure(xnfile_write(db->file_handle, &buf, 0, sizeof(uint8_t)));
-    xn_ensure(xnfile_sync(db->file_handle));
-
-    *out_db = db;
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
-    xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
-    xn_ensure(xnfile_close(db->file_handle));
-    free(db);
-    return xn_ok();
-}
 
 struct xnpg {
     struct xnfile *file_handle;
     uint64_t idx;
 };
-
-uint8_t *xnpg_serialize(struct xnpg *page) {
-    int slen = strlen(page->file_handle->path) + 1; //include null terminator
-    uint8_t *buf;
-    xn_ensure((buf = malloc(sizeof(uint64_t) + slen)) != NULL);
-
-    memcpy(buf, &page->idx, sizeof(uint64_t));
-    memcpy(buf + sizeof(uint64_t), page->file_handle->path, slen);
-    return buf;
-}
 
 struct xnentry {
     uint64_t pg_idx;
@@ -112,26 +67,13 @@ static uint32_t xn_hash(const uint8_t *buf, int length) {
 }
 
 uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
-    /*
-    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
-    key = xnpg_serialize(page);
-
-    int length = strlen((char*)key);
-    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;*/
     uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
 
     while (cur) {
-        /*
-        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
-        cur_key = xnpg_serialize(&cur->page);*/
-
         if (cur->pg_idx == page->idx)
             return cur->val;
 
-            /*
-        if (strcmp((char*)key, (char*)(cur_key)) == 0)
-            return cur->val;*/
         cur = cur->next;
     }
 
@@ -139,23 +81,11 @@ uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
 }
 
 __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
-    /*
-    __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
-    key = xnpg_serialize(page);
-
-    int length = strlen((char*)key);
-    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;*/
-
     uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
 
     while (cur) {
-        /*
-        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
-        cur_key = xnpg_serialize(&cur->page);*/
-
         if (cur->pg_idx == page->idx) {
-        //if (strcmp((char*)key, (char*)(cur_key)) == 0) {
             cur->val = val;
             return true;
         }
@@ -174,6 +104,50 @@ __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct 
 
     return true;
 }
+
+
+static void xn_cleanup_free(void *p) {
+    free(*(void**) p);
+}
+
+enum xntxmode {
+    XNTXMODE_RD,
+    XNTXMODE_WR
+};
+
+//TODO move to own files later
+struct xndb {
+    pthread_rwlock_t wrtx_lock;
+    struct xnfile *file_handle;
+    struct xntbl *pg_tbl;
+};
+
+__attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struct xndb **out_db) {
+    struct xndb *db;
+    xn_ensure((db = malloc(sizeof(struct xndb))) != NULL);
+    xn_ensure(pthread_rwlock_init(&db->wrtx_lock, NULL) == 0);
+
+    xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
+    xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 8));
+    uint8_t buf = 1;
+    xn_ensure(xnfile_write(db->file_handle, &buf, 0, sizeof(uint8_t)));
+    xn_ensure(xnfile_sync(db->file_handle));
+
+    xn_ensure(xntbl_create(&db->pg_tbl));
+
+    *out_db = db;
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
+    xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
+    xn_ensure(xnfile_close(db->file_handle));
+    //TODO unmap pages before freeing page table
+    xntbl_free(db->pg_tbl);
+    free(db);
+    return xn_ok();
+}
+
 
 //TODO move to own files later
 struct xntx {
@@ -215,28 +189,30 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
             cur = cur->next;
         }
     }
-    //TODO lock file pages to prevent readers from reading partial data???
-    //get a xlock on all modified page to prevent readers from reading partial data
-    //write logs to durable storage, and sync
+    //TODO write logs to durable storage, and sync
     if (tx->mode == XNTXMODE_WR)
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
+
+    //TODO free local buffers before freeing modded page table
     xntbl_free(tx->mod_pgs);
     free(tx);
     return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
-    //TODO lock file pages to prevent readers from reading partial data???
-    //get a xlock on all modified page to prevent readers from reading partial data
-    //write logs to durable storage, and sync
+
     if (tx->mode == XNTXMODE_WR)
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
+
+    //TODO free local buffers before freeing modded page table
     xntbl_free(tx->mod_pgs);
     free(tx);
     return xn_ok();
 }
 
-__attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
+__attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg *page, const uint8_t *buf, int offset, size_t size) {
+    assert(tx->mode == XNTXMODE_WR);
+
     uint8_t *cpy;
 
     if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
@@ -250,13 +226,27 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
 }
 
 __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
-    uint8_t *cpy;
+    if (tx->mode == XNTXMODE_WR) {
+        uint8_t *cpy;
 
-    if ((cpy = xntbl_find(tx->mod_pgs, page))) {
-        memcpy(buf, cpy + offset, size);
-    } else {
-        xn_ensure(xnfile_read(page->file_handle, buf, offset, size));
+        if ((cpy = xntbl_find(tx->mod_pgs, page))) {
+            memcpy(buf, cpy + offset, size);
+            return true;
+        }
     }
+
+    uint8_t *ptr;
+    if (!(ptr = xntbl_find(tx->db->pg_tbl, page))) {
+        xn_ensure((ptr = malloc(XNPG_SZ)) != NULL);
+        xn_ensure(xnpg_read(page, ptr));
+        xn_ensure(xntbl_insert(tx->db->pg_tbl, page, ptr));
+    }
+
+    //TODO need to update the potentially stale version in cache
+    //this should not be necessary once we switch over to mmapped version
+    xn_ensure(xnpg_read(page, ptr));
+
+    memcpy(buf, ptr + offset, size);
 
     return true;
 }
@@ -338,14 +328,13 @@ int main(int argc, char** argv) {
             printf("failed\n");
     }
 
-    {
+    { 
         struct xntx *tx;
         if (!xntx_create(db, XNTXMODE_WR, &tx))
             printf("failed\n");
         struct xnpg page;
         if (!xntx_allocate_page(tx, &page))
             printf("failed\n");
-
         if (!xntx_rollback(tx))
             printf("failed\n");
     }
