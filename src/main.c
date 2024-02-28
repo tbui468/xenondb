@@ -66,7 +66,7 @@ uint8_t *xnpg_serialize(struct xnpg *page) {
 }
 
 struct xnentry {
-    struct xnpg page;
+    uint64_t pg_idx;
     uint8_t *val;
     struct xnentry *next;
 };
@@ -112,19 +112,26 @@ static uint32_t xn_hash(const uint8_t *buf, int length) {
 }
 
 uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
+    /*
     __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
     key = xnpg_serialize(page);
 
     int length = strlen((char*)key);
-    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;
-
+    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;*/
+    uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
-    while (cur) {
-        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
-        cur_key = xnpg_serialize(&cur->page);
 
-        if (strcmp((char*)key, (char*)(cur_key)) == 0)
+    while (cur) {
+        /*
+        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
+        cur_key = xnpg_serialize(&cur->page);*/
+
+        if (cur->pg_idx == page->idx)
             return cur->val;
+
+            /*
+        if (strcmp((char*)key, (char*)(cur_key)) == 0)
+            return cur->val;*/
         cur = cur->next;
     }
 
@@ -132,18 +139,23 @@ uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
 }
 
 __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
+    /*
     __attribute__((cleanup(xn_cleanup_free))) uint8_t *key;
     key = xnpg_serialize(page);
 
     int length = strlen((char*)key);
-    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;
+    uint32_t bucket = xn_hash(key, length) % XNTBL_MAX_BUCKETS;*/
 
+    uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
-    while (cur) {
-        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
-        cur_key = xnpg_serialize(&cur->page);
 
-        if (strcmp((char*)key, (char*)(cur_key)) == 0) {
+    while (cur) {
+        /*
+        __attribute__((cleanup(xn_cleanup_free))) uint8_t *cur_key;
+        cur_key = xnpg_serialize(&cur->page);*/
+
+        if (cur->pg_idx == page->idx) {
+        //if (strcmp((char*)key, (char*)(cur_key)) == 0) {
             cur->val = val;
             return true;
         }
@@ -156,7 +168,7 @@ __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct 
     struct xnentry* entry;
     xn_ensure((entry = malloc(sizeof(struct xnentry))) != NULL);
     entry->next = head;
-    entry->page = *page;
+    entry->pg_idx = page->idx;
     entry->val = val;
     tbl->entries[bucket] = entry;
 
@@ -187,20 +199,22 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
 }
 
 __attribute__((warn_unused_result)) bool xnpg_write(struct xnpg *page, const uint8_t *buf) {
-    xn_ensure(xnfile_write(page->file_handle, buf, 0, XNPG_SZ)); 
+    xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
     return true;
 }
 
 __attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *buf) {
-    xn_ensure(xnfile_read(page->file_handle, buf, 0, XNPG_SZ));
+    xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
     return true;
 }
 
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
+    struct xnpg page = {.file_handle = tx->db->file_handle, .idx = -1};
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tx->mod_pgs->entries[i];
         while (cur) {
-            xn_ensure(xnpg_write(&cur->page, cur->val));
+            page.idx = cur->pg_idx;
+            xn_ensure(xnpg_write(&page, cur->val));
             cur = cur->next;
         }
     }
