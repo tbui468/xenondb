@@ -178,7 +178,6 @@ __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct 
 //TODO move to own files later
 struct xntx {
     enum xntxmode mode;
-    pthread_rwlock_t *lock;
     struct xntbl *mod_pgs;
     struct xndb *db;
 };
@@ -186,11 +185,9 @@ struct xntx {
 __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
     struct xntx *tx;
     xn_ensure((tx = malloc(sizeof(struct xntx))) != NULL);
-    tx->lock = NULL;
     tx->db = db;
     xn_ensure(xntbl_create(&tx->mod_pgs));
     if (mode == XNTXMODE_WR) {
-        tx->lock = &db->wrtx_lock;
         xn_ensure(pthread_rwlock_wrlock(&db->wrtx_lock) == 0);
     }
     tx->mode = mode;
@@ -222,7 +219,7 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     //get a xlock on all modified page to prevent readers from reading partial data
     //write logs to durable storage, and sync
     if (tx->mode == XNTXMODE_WR)
-        xn_ensure(pthread_rwlock_unlock(tx->lock) == 0);
+        xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
     xntbl_free(tx->mod_pgs);
     free(tx);
     return xn_ok();
@@ -233,7 +230,7 @@ __attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
     //get a xlock on all modified page to prevent readers from reading partial data
     //write logs to durable storage, and sync
     if (tx->mode == XNTXMODE_WR)
-        xn_ensure(pthread_rwlock_unlock(tx->lock) == 0);
+        xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
     xntbl_free(tx->mod_pgs);
     free(tx);
     return xn_ok();
