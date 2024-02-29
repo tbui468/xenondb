@@ -187,12 +187,12 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
 
 __attribute__((warn_unused_result)) bool xnpg_write(struct xnpg *page, const uint8_t *buf) {
     xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *buf) {
     xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
@@ -239,7 +239,7 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
     }
 
     memcpy(cpy + offset, buf, size);
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
@@ -248,7 +248,7 @@ __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg 
 
         if ((cpy = xntbl_find(tx->mod_pgs, page))) {
             memcpy(buf, cpy + offset, size);
-            return true;
+            return xn_ok();
         }
     }
 
@@ -260,7 +260,7 @@ __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg 
 
     memcpy(buf, ptr + offset, size);
 
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xntx_find_free_page(struct xntx *tx, struct xnpg *meta_page, struct xnpg *new_page) {
@@ -282,7 +282,7 @@ __attribute__((warn_unused_result)) bool xntx_find_free_page(struct xntx *tx, st
 found_free_bit:
     new_page->file_handle = meta_page->file_handle;
     new_page->idx = i * 8 + j;
-    return true;
+    return xn_ok();
 }
 
 int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
