@@ -67,6 +67,7 @@ __attribute__((warn_unused_result)) bool xnfile_set_size(struct xnfile *handle, 
 
 __attribute__((warn_unused_result)) bool xnfile_sync(struct xnfile *handle) {
     xn_ensure(fdatasync(handle->fd) == 0);
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size) {

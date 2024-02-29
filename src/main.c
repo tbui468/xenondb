@@ -14,7 +14,8 @@
 #include "common.h"
 #include "file.h"
 
-
+pthread_cond_t disk_rdtxs_cv = PTHREAD_COND_INITIALIZER;
+pthread_cond_t mem_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 
 struct xnpg {
     struct xnfile *file_handle;
@@ -29,6 +30,18 @@ __attribute__((warn_unused_result)) bool xnpg_mmap(struct xnpg *page, uint8_t **
 __attribute__((warn_unused_result)) bool xnpg_munmap(uint8_t *ptr) {
     xn_ensure(xnfile_munmap((void*)ptr, XNPG_SZ));
     return true;
+}
+
+__attribute__((warn_unused_result)) bool xn_atomic_increment(int *i, pthread_mutex_t *lock) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    (*i)++;
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
+}
+
+__attribute__((warn_unused_result)) bool xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    (*i)--;
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
 }
 
 struct xnentry {
@@ -137,12 +150,16 @@ struct xndb {
     pthread_rwlock_t wrtx_lock;
     struct xnfile *file_handle;
     struct xntbl *pg_tbl;
+    bool wrtx_committed;
+    pthread_mutex_t rdtx_count_lock;
+    int rdtx_count;
 };
 
 __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struct xndb **out_db) {
     struct xndb *db;
     xn_ensure((db = malloc(sizeof(struct xndb))) != NULL);
     xn_ensure(pthread_rwlock_init(&db->wrtx_lock, NULL) == 0);
+    xn_ensure(pthread_mutex_init(&db->rdtx_count_lock, NULL) == 0);
 
     xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 8));
@@ -152,12 +169,16 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
 
     xn_ensure(xntbl_create(&db->pg_tbl));
 
+    db->wrtx_committed = false;
+    db->rdtx_count = 0;
+
     *out_db = db;
     return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
     xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
+    xn_ensure(pthread_mutex_destroy(&db->rdtx_count_lock) == 0);
     xn_ensure(xnfile_close(db->file_handle));
     xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
@@ -170,15 +191,22 @@ struct xntx {
     enum xntxmode mode;
     struct xntbl *mod_pgs;
     struct xndb *db;
+    pthread_mutex_t rdtx_count_lock;
+    int rdtx_count;
 };
 
 __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
+    printf("creating tx\n");
     struct xntx *tx;
     xn_ensure((tx = malloc(sizeof(struct xntx))) != NULL);
     tx->db = db;
-    xn_ensure(xntbl_create(&tx->mod_pgs));
+    tx->rdtx_count = 0;
+    xn_ensure(pthread_mutex_init(&tx->rdtx_count_lock, NULL) == 0);
     if (mode == XNTXMODE_WR) {
         xn_ensure(pthread_rwlock_wrlock(&db->wrtx_lock) == 0);
+        xn_ensure(xntbl_create(&tx->mod_pgs));
+    } else {
+        xn_ensure(xn_atomic_increment(&tx->db->rdtx_count, &db->rdtx_count_lock));
     }
     tx->mode = mode;
     *out_tx = tx;
@@ -195,7 +223,19 @@ __attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *b
     return xn_ok();
 }
 
-__attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
+__attribute__((warn_unused_result)) bool xn_wait_until_zero(int *count, pthread_mutex_t *lock, pthread_cond_t *cv) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    while (*count > 0) {
+        xn_ensure(pthread_cond_wait(cv, lock) == 0);
+    }
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
+
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xntx_flush_writes(struct xntx *tx) {
+    assert(tx->mode == XNTXMODE_WR);
+
     struct xnpg page = {.file_handle = tx->db->file_handle, .idx = -1};
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tx->mod_pgs->entries[i];
@@ -206,24 +246,43 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
             cur = cur->next;
         }
     }
-    //TODO write logs to durable storage, and sync
-    if (tx->mode == XNTXMODE_WR)
-        xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
+    xn_ensure(xnfile_sync(tx->db->file_handle));
 
-    //TODO free local buffers before freeing modded page table
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx) {
+    if (XNTXMODE_RD) {
+        xn_ensure(xn_atomic_decrement(&tx->db->rdtx_count, &tx->db->rdtx_count_lock));
+        free(tx);
+        return xn_ok();
+    }
+
+    //XNTXMODE_WR
+    xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
     xn_ensure(xntbl_free(tx->mod_pgs, false));
+    xn_ensure(pthread_mutex_destroy(&tx->rdtx_count_lock) == 0);
     free(tx);
     return xn_ok();
 }
 
+__attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
+    assert(tx->mode == XNTXMODE_WR);
+    tx->db->wrtx_committed = true;
+    
+    xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, &tx->db->rdtx_count_lock, &disk_rdtxs_cv));
+    xn_ensure(xntx_flush_writes(tx));
+    tx->db->wrtx_committed = false;
+
+    xn_ensure(xn_wait_until_zero(&tx->rdtx_count, &tx->rdtx_count_lock, &mem_rdtxs_cv));
+    xn_ensure(xntx_free(tx));
+
+    return xn_ok();
+}
+
 __attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
+    xn_ensure(xntx_free(tx));
 
-    if (tx->mode == XNTXMODE_WR)
-        xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
-
-    //TODO free local buffers before freeing modded page table
-    xn_ensure(xntbl_free(tx->mod_pgs, false));
-    free(tx);
     return xn_ok();
 }
 
@@ -347,7 +406,7 @@ int main(int argc, char** argv) {
         struct xnpg page;
         if (!xntx_allocate_page(tx, &page))
             printf("failed\n");
-        if (!xntx_rollback(tx))
+        if (!xntx_commit(tx))
             printf("failed\n");
     }
 
