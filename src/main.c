@@ -21,6 +21,16 @@ struct xnpg {
     uint64_t idx;
 };
 
+__attribute__((warn_unused_result)) bool xnpg_mmap(struct xnpg *page, uint8_t **ptr) {
+    xn_ensure(xnfile_mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
+    return true;
+}
+
+__attribute__((warn_unused_result)) bool xnpg_munmap(uint8_t *ptr) {
+    xn_ensure(xnfile_munmap((void*)ptr, XNPG_SZ));
+    return true;
+}
+
 struct xnentry {
     uint64_t pg_idx;
     uint8_t *val;
@@ -43,13 +53,13 @@ __attribute__((warn_unused_result)) bool xntbl_create(struct xntbl **out_tbl) {
     return true;
 }
 
-void xntbl_free(struct xntbl *tbl, bool unmap) {
+__attribute__((warn_unused_result)) bool xntbl_free(struct xntbl *tbl, bool unmap) {
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tbl->entries[i];
         while (cur) {
             struct xnentry *next = cur->next;
             if (unmap) {
-                xn_ensure((munmap(cur->val, XNPG_SZ)) == 0);
+                xn_ensure(xnpg_munmap(cur->val));
             } else {
                 free(cur->val);
             }
@@ -59,6 +69,8 @@ void xntbl_free(struct xntbl *tbl, bool unmap) {
     }
     free(tbl->entries);
     free(tbl);
+
+    return true;
 }
 
 //hash function from 'Crafting Interpreters'
@@ -147,8 +159,7 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
 __attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
     xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
     xn_ensure(xnfile_close(db->file_handle));
-    //TODO unmap pages before freeing page table
-    xntbl_free(db->pg_tbl, true);
+    xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
     return xn_ok();
 }
@@ -200,7 +211,7 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
 
     //TODO free local buffers before freeing modded page table
-    xntbl_free(tx->mod_pgs, false);
+    xn_ensure(xntbl_free(tx->mod_pgs, false));
     free(tx);
     return xn_ok();
 }
@@ -211,7 +222,7 @@ __attribute__((warn_unused_result)) bool xntx_rollback(struct xntx *tx) {
         xn_ensure(pthread_rwlock_unlock(&tx->db->wrtx_lock) == 0);
 
     //TODO free local buffers before freeing modded page table
-    xntbl_free(tx->mod_pgs, false);
+    xn_ensure(xntbl_free(tx->mod_pgs, false));
     free(tx);
     return xn_ok();
 }
@@ -243,7 +254,7 @@ __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg 
 
     uint8_t *ptr;
     if (!(ptr = xntbl_find(tx->db->pg_tbl, page))) {
-        xn_ensure((ptr = mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, tx->db->file_handle->fd, page->idx * XNPG_SZ)) != MAP_FAILED);
+        xn_ensure(xnpg_mmap(page, &ptr));
         xn_ensure(xntbl_insert(tx->db->pg_tbl, page, ptr));
     }
 

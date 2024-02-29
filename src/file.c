@@ -109,3 +109,14 @@ __attribute__((warn_unused_result)) bool xnfile_read(struct xnfile *handle, char
     return xn_ok();
 }
 
+__attribute__((warn_unused_result)) bool xnfile_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset, void **out_ptr) {
+    void *ptr;
+    xn_ensure((ptr = mmap(addr, len, prot, flags, fd, offset)) != MAP_FAILED);
+    *out_ptr = ptr;
+    return true;
+}
+
+__attribute__((warn_unused_result)) bool xnfile_munmap(void *addr, size_t len) {
+    xn_ensure((munmap(addr, len)) == 0);
+    return true;
+}
