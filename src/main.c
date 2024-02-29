@@ -24,24 +24,49 @@ struct xnpg {
 
 __attribute__((warn_unused_result)) bool xnpg_mmap(struct xnpg *page, uint8_t **ptr) {
     xn_ensure(xnfile_mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xnpg_munmap(uint8_t *ptr) {
     xn_ensure(xnfile_munmap((void*)ptr, XNPG_SZ));
-    return true;
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xn_atomic_increment(int *i, pthread_mutex_t *lock) {
     xn_ensure(pthread_mutex_lock(lock) == 0);
     (*i)++;
     xn_ensure(pthread_mutex_unlock(lock) == 0);
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    (*i)--;
+    if (i == 0)
+        xn_ensure(pthread_cond_signal(cv) == 0);
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    return xn_ok();
 }
 
 __attribute__((warn_unused_result)) bool xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
     xn_ensure(pthread_mutex_lock(lock) == 0);
     (*i)--;
     xn_ensure(pthread_mutex_unlock(lock) == 0);
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xn_atomic_set_bool(bool *b, bool val, pthread_mutex_t *lock) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    *b = val;
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xn_atomic_get_bool(bool *b, bool *result, pthread_mutex_t *lock) {
+    xn_ensure(pthread_mutex_lock(lock) == 0);
+    *result = *b;
+    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    return xn_ok();
 }
 
 struct xnentry {
@@ -147,10 +172,13 @@ enum xntxmode {
 
 //TODO move to own files later
 struct xndb {
-    pthread_rwlock_t wrtx_lock;
+    pthread_rwlock_t wrtx_lock; //TODO this should just be a mutex
     struct xnfile *file_handle;
     struct xntbl *pg_tbl;
+
+    pthread_mutex_t wrtx_committed_lock;
     bool wrtx_committed;
+
     pthread_mutex_t rdtx_count_lock;
     int rdtx_count;
 };
@@ -160,6 +188,7 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
     xn_ensure((db = malloc(sizeof(struct xndb))) != NULL);
     xn_ensure(pthread_rwlock_init(&db->wrtx_lock, NULL) == 0);
     xn_ensure(pthread_mutex_init(&db->rdtx_count_lock, NULL) == 0);
+    xn_ensure(pthread_mutex_init(&db->wrtx_committed_lock, NULL) == 0);
 
     xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 8));
@@ -179,6 +208,7 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
 __attribute__((warn_unused_result)) bool xndb_free(struct xndb *db) {
     xn_ensure(pthread_rwlock_destroy(&db->wrtx_lock) == 0);
     xn_ensure(pthread_mutex_destroy(&db->rdtx_count_lock) == 0);
+    xn_ensure(pthread_mutex_destroy(&db->wrtx_committed_lock) == 0);
     xn_ensure(xnfile_close(db->file_handle));
     xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
@@ -193,10 +223,11 @@ struct xntx {
     struct xndb *db;
     pthread_mutex_t rdtx_count_lock;
     int rdtx_count;
+
+    bool mem_reader;
 };
 
 __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
-    printf("creating tx\n");
     struct xntx *tx;
     xn_ensure((tx = malloc(sizeof(struct xntx))) != NULL);
     tx->db = db;
@@ -206,7 +237,15 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
         xn_ensure(pthread_rwlock_wrlock(&db->wrtx_lock) == 0);
         xn_ensure(xntbl_create(&tx->mod_pgs));
     } else {
-        xn_ensure(xn_atomic_increment(&tx->db->rdtx_count, &db->rdtx_count_lock));
+        xn_ensure(pthread_mutex_lock(&db->wrtx_committed_lock));
+        if (db->wrtx_committed) {
+            tx->mem_reader = true;
+            xn_ensure(xn_atomic_increment(&tx->rdtx_count, &tx->rdtx_count_lock));
+        } else {
+            tx->mem_reader = false;
+            xn_ensure(xn_atomic_increment(&db->rdtx_count, &db->rdtx_count_lock));
+        }
+        xn_ensure(pthread_mutex_unlock(&db->wrtx_committed_lock));
     }
     tx->mode = mode;
     *out_tx = tx;
@@ -253,7 +292,11 @@ __attribute__((warn_unused_result)) bool xntx_flush_writes(struct xntx *tx) {
 
 __attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx) {
     if (XNTXMODE_RD) {
-        xn_ensure(xn_atomic_decrement(&tx->db->rdtx_count, &tx->db->rdtx_count_lock));
+        if (tx->mem_reader) {
+            xn_ensure(xn_atomic_decrement_and_signal(&tx->rdtx_count, &tx->rdtx_count_lock, &mem_rdtxs_cv));
+        } else {
+            xn_ensure(xn_atomic_decrement_and_signal(&tx->db->rdtx_count, &tx->db->rdtx_count_lock, &disk_rdtxs_cv));
+        }
         free(tx);
         return xn_ok();
     }
@@ -268,11 +311,11 @@ __attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx) {
 
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     assert(tx->mode == XNTXMODE_WR);
-    tx->db->wrtx_committed = true;
+    xn_ensure(xn_atomic_set_bool(&tx->db->wrtx_committed, true, &tx->db->wrtx_committed_lock));
     
     xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, &tx->db->rdtx_count_lock, &disk_rdtxs_cv));
     xn_ensure(xntx_flush_writes(tx));
-    tx->db->wrtx_committed = false;
+    xn_ensure(xn_atomic_set_bool(&tx->db->wrtx_committed, false, &tx->db->wrtx_committed_lock));
 
     xn_ensure(xn_wait_until_zero(&tx->rdtx_count, &tx->rdtx_count_lock, &mem_rdtxs_cv));
     xn_ensure(xntx_free(tx));
@@ -302,7 +345,7 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
 }
 
 __attribute__((warn_unused_result)) bool xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
-    if (tx->mode == XNTXMODE_WR) {
+    if (tx->mode == XNTXMODE_WR || tx->mem_reader) {
         uint8_t *cpy;
 
         if ((cpy = xntbl_find(tx->mod_pgs, page))) {
