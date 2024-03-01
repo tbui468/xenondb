@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 
 extern char _xnerr_buf[1024];
 
@@ -23,3 +25,6 @@ extern char _xnerr_buf[1024];
 #define xnerr_tostring() _xnerr_buf
 
 #define xn_ensure(b) if (!(b)) { xn_failed(strerror(errno)); }
+
+bool xn_malloc(size_t size, void **ptr);
+bool xn_aligned_malloc(size_t size, void **ptr);

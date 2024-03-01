@@ -4,6 +4,7 @@
 #define XNPGID_METADATA 0
 #define XNTBL_MAX_BUCKETS 128
 #define XNPG_SZ 4096
+#define XNLOG_MAX_PGS 32
 #include <stdlib.h> //free
 #include <assert.h>
 #include <errno.h>
@@ -156,8 +157,60 @@ enum xntxmode {
     XNTXMODE_WR
 };
 
-//TODO move to own files later
+struct xnlog {
+    uint8_t *buf;
+    int count;
+    int capacity;
+    int highest_tx_flushed;
+    struct xnfile *file_handle;
+    int page_idx;
+};
+
+__attribute__((warn_unused_result)) bool xnlog_create(const char *log_path, struct xnlog **out_log) {
+    struct xnlog *log;
+    xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
+
+    xn_ensure(xnfile_create("log", true, &log->file_handle));
+    xn_ensure(xnfile_set_size(log->file_handle, XNLOG_MAX_PGS * XNPG_SZ)); //TODO hard coding this to 8 pages for now
+
+    log->capacity = XNPG_SZ;
+    log->count = 0;
+    xn_ensure(xn_aligned_malloc(log->capacity, (void**)&log->buf));
+    
+    log->highest_tx_flushed = -1;
+    log->page_idx = 0;
+
+    *out_log = log;
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xnlog_flush(struct xnlog *log, bool is_full) {
+    xn_ensure(xnfile_write(log->file_handle, log->buf, log->page_idx * XNPG_SZ, log->capacity));
+    xn_ensure(xnfile_sync(log->file_handle));
+
+    if (is_full) {
+        log->count = 0;
+        log->highest_tx_flushed = -1; //TODO need to set this to highest committed tx on this page
+        log->page_idx++;
+        assert(log->page_idx < XNLOG_MAX_PGS && "over hard-coded maximum log pages - should grow file dynamically");
+    }
+
+    return xn_ok();
+}
+
+
+__attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, uint8_t *log_record, size_t size) {
+    if (log->count + size > log->capacity) {
+        xn_ensure(xnlog_flush(log, true));
+    }
+
+    memcpy(log->buf + log->count, log_record, size);
+    log->count += size;
+    return xn_ok();
+}
+
 struct xndb {
+    struct xnlog *log;
     pthread_mutex_t wrtx_lock;
     struct xnfile *file_handle;
     struct xntbl *pg_tbl;
@@ -171,10 +224,12 @@ struct xndb {
 
 __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struct xndb **out_db) {
     struct xndb *db;
-    xn_ensure((db = malloc(sizeof(struct xndb))) != NULL);
+    xn_ensure(xn_malloc(sizeof(struct xndb), (void**)&db));
     xn_ensure(pthread_mutex_init(&db->wrtx_lock, NULL) == 0);
     xn_ensure(pthread_mutex_init(&db->rdtx_count_lock, NULL) == 0);
     xn_ensure(pthread_mutex_init(&db->committed_wrtx_lock, NULL) == 0);
+
+    xn_ensure(xnlog_create("log", &db->log));
 
     xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
@@ -297,19 +352,33 @@ __attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx) {
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     assert(tx->mode == XNTXMODE_WR);
 
+    //TODO append writes to log, sync - this is a placeholder
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
+    int dummy_tx_id = 42;
+    xn_ensure(xnlog_append(tx->db->log, (uint8_t*)&dummy_tx_id, sizeof(int)));
+
     tx->db->committed_wrtx = tx;
     xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
-   
+
+    //TODO remaining code should run asynchronously (eg, no more readers in next tbl)
+  
+    //TODO writing data to disk when 1. next table has no more readers (it will have one writer - this current tx itself.  But this tx is committed already) 
     xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, &tx->db->rdtx_count_lock, &disk_rdtxs_cv));
+    xn_ensure(xnlog_flush(tx->db->log, false));
     xn_ensure(xntx_flush_writes(tx));
 
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
     tx->db->committed_wrtx = NULL;
     xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
 
+    //TODO page table should be freed when no more readers and writer txs are reading from this page table
+
+    //TODO freeing this table should only occur when 1. no more readers and 2. no more writer (up to one writer) referencing it
     xn_ensure(xn_wait_until_zero(&tx->rdtx_count, &tx->rdtx_count_lock, &mem_rdtxs_cv));
+    //TODO xntx_free is releasing the write lock - this can occur right after this tx commits (tx->db->committed_wrtx = tx)
+    //If a new write tx starts, it will prevent this write transaction from being freed
     xn_ensure(xntx_free(tx));
+
 
     return xn_ok();
 }
@@ -453,6 +522,7 @@ int main(int argc, char** argv) {
     if (!xndb_create("students", &db))
         printf("failed\n");
 
+    //multi-threaded test
     const int THREAD_COUNT = 24;
     pthread_t threads[THREAD_COUNT];
     for (int i = 0; i < THREAD_COUNT; i++) {
@@ -466,6 +536,8 @@ int main(int argc, char** argv) {
         pthread_join(threads[i], NULL);
     }
 
+
+    //single threaded test
     /*
     {
         struct xntx *tx;
