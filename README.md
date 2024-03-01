@@ -9,6 +9,8 @@ The file system module abstracts over the OS file system, and provides an file h
 the rest of the storage engine.  Files will be mmapped so that read transactions can read data directly
 from disk.
 
+Writing to the file system is a lot more complex than it seems.  
+
 ## Paging
 Rather than dealing with files directly, persistent data structures using in XenonDB will work with page-level
 objects.  Pages can be allocated and freed.  The first page in each file is used to store metadata about the file,
