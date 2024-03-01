@@ -5,6 +5,7 @@
 #define XNTBL_MAX_BUCKETS 128
 #define XNPG_SZ 4096
 #define XNLOG_MAX_PGS 32
+#define XNLOG_BUF_SZ XNPG_SZ * 2
 #include <stdlib.h> //free
 #include <assert.h>
 #include <errno.h>
@@ -157,6 +158,12 @@ enum xntxmode {
     XNTXMODE_WR
 };
 
+enum xnlogt {
+    XNLOGT_START,
+    XNLOGT_UPDATE,
+    XNLOGT_COMMIT
+};
+
 struct xnlog {
     uint8_t *buf;
     int count;
@@ -171,9 +178,9 @@ __attribute__((warn_unused_result)) bool xnlog_create(const char *log_path, stru
     xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
 
     xn_ensure(xnfile_create("log", true, &log->file_handle));
-    xn_ensure(xnfile_set_size(log->file_handle, XNLOG_MAX_PGS * XNPG_SZ)); //TODO hard coding this to 8 pages for now
+    xn_ensure(xnfile_set_size(log->file_handle, XNLOG_MAX_PGS * XNPG_SZ));
 
-    log->capacity = XNPG_SZ;
+    log->capacity = XNLOG_BUF_SZ;
     log->count = 0;
     xn_ensure(xn_aligned_malloc(log->capacity, (void**)&log->buf));
     
@@ -198,8 +205,42 @@ __attribute__((warn_unused_result)) bool xnlog_flush(struct xnlog *log, bool is_
     return xn_ok();
 }
 
+__attribute__((warn_unused_result)) bool xnlog_serialize_record(int tx_id, 
+                                                                enum xnlogt type, 
+                                                                size_t data_size, 
+                                                                uint8_t *data, 
+                                                                uint8_t **out_buf,
+                                                                size_t *out_size) {
+    size_t size = sizeof(int);      //tx id
+    size += sizeof(enum xnlogt);    //log type
+    size += sizeof(size_t);         //data size 
+    size += data_size;              //data
+    size += sizeof(uint32_t);       //checksum
 
-__attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, uint8_t *log_record, size_t size) {
+    uint8_t *buf;
+    xn_ensure(xn_malloc(size, (void**)&buf));
+
+    off_t off = 0;
+    memcpy(buf + off, &tx_id, sizeof(int));
+    off += sizeof(int);
+    memcpy(buf + off, &type, sizeof(enum xnlogt));
+    off += sizeof(enum xnlogt);
+    memcpy(buf + off, &data_size, sizeof(size_t));
+    off += sizeof(size_t);
+    memcpy(buf + off, data, data_size);
+    off += data_size;
+    uint32_t checksum = xn_hash(buf, off);
+    memcpy(buf + off, &checksum, sizeof(uint32_t));
+    off += sizeof(uint32_t);
+
+    *out_buf = buf;
+    *out_size = size;
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
+    assert(size <= XNLOG_BUF_SZ);
+
     if (log->count + size > log->capacity) {
         xn_ensure(xnlog_flush(log, true));
     }
@@ -290,6 +331,12 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
     if (mode == XNTXMODE_WR) {
         xn_ensure(pthread_mutex_lock(&db->wrtx_lock) == 0);
         xn_ensure(xntbl_create(&tx->mod_pgs));
+
+        uint8_t *rec;
+        size_t rec_size;
+        xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, &rec, &rec_size));
+        xn_ensure(xnlog_append(db->log, rec, rec_size));
+        free(rec);
     } else {
         xn_ensure(pthread_mutex_lock(&db->committed_wrtx_lock));
         if (db->committed_wrtx) {
@@ -368,7 +415,11 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
 
     //TODO append writes to log, sync - this is a placeholder
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
-    xn_ensure(xnlog_append(tx->db->log, (uint8_t*)&tx->id, sizeof(int)));
+    uint8_t *rec;
+    size_t rec_size;
+    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, &rec, &rec_size));
+    xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
+    free(rec);
 
     tx->db->committed_wrtx = tx;
     xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
@@ -414,6 +465,22 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
     }
 
     memcpy(cpy + offset, buf, size);
+
+    uint8_t *update_data;
+    size_t data_size = size + sizeof(int) * 2; //including page index and offset
+    xn_ensure(xn_malloc(data_size, (void**)&update_data));
+    memcpy(update_data, &page->idx, sizeof(int));
+    memcpy(update_data + sizeof(int), &offset, sizeof(int));
+    memcpy(update_data + sizeof(int) * 2, buf, size);
+
+    uint8_t *rec;
+    size_t rec_size;
+    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_UPDATE, data_size, update_data, &rec, &rec_size));
+    xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
+
+    free(rec);
+    free(update_data);
+
     return xn_ok();
 }
 
