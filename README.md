@@ -4,12 +4,66 @@
 XenonDB is a basic storage engine for educational purposes.  The goal is a basic program that can demonstrate
 ACID properties.  The engine is implemented in C.
 
-## File System Access
-The file system module abstracts over the OS file system, and provides an file handle to
-the rest of the storage engine.  Files will be mmapped so that read transactions can read data directly
-from disk.
+## Infrastructure
+xn_ok and xn_fail are the two status macros that all functions that could result in an error return.  xn_ensure is a macro used to exit a function with a failure status if the argument evaluates to false.  This macro is wrapped around all functions that could possibly return an error.  
 
-Writing to the file system is a lot more complex than it seems.  
+The code
+
+if ((ptr = malloc(size)) == NULL) {
+    //save error message
+    return xnfailed();
+}
+
+if ((fd = open(path)) == -1) {
+    //save error message
+    return xnfailed();
+}
+
+if (close(fd) != 0) {
+    //save error message
+    return xnfailed();
+}
+
+return xn_ok();
+
+now becomes
+
+xn_ensure((ptr = malloc(size)) != NULL);
+xn_ensure((fd = open(path)) != -1);
+xn_ensure(close(fd) == 0);
+return xn_ok();
+
+This is easier to read and less error prone.  
+
+## File System Access
+The file system module abstracts over the OS file system, and provides an file handle to the rest of the storage engine.  Writing to the file system is a lot more complex than it seems, and considering multiple OSs and compilers further complicates things.  To keep is simple, we will write code that works with Linux and the gcc compiler.
+
+The struct xnfile will store information about a file in XenonDB.  Other modules and functions in XenonDB will pass around this struct.
+
+struct xnfile {
+    int fd;
+    char *path;
+    size_t size;
+};
+
+Creating a new xnfile is done with xnfile_create.  The absolute path of the file is saved rather than the relative path.  The second argument specifies whether the file should be opened with the O_DIRECT flag.  
+
+When writing data to disk, there are a few places where the data could be buffered - used libraries, the OS kernel and on the disk itself.  Buffering improves performance but sometimes we need to ensure that data is written to stable storage and the performance hit is acceptable.  
+
+O_DIRECT tells the kernel to bypass the kernel cache and write directly to the device.  [NEED TO READ THAT LINUX FILE SYSTEM ARTICLE AGAIN]
+
+xnfile_sync_parent is necessary to ensure that file metadata is saved to stable storage.  Is a file's metadata saved in parent directory???
+
+xnfile_set_size
+
+xnfile_sync
+
+xnfile_close will close the file descriptor and free the struct from memory.
+
+xnfile_read and xnfile_write will read and write to a file, respectively.  Both the read and write system calls may return without reading/writing all the requested bytes, so they are called in a loop until all the requested bytes are processed.  read and write will return a -1 for errors and also if the function was interrupted before processing any bytes.  errno will be set to EINTR if the function was interrupted.  Errors should be reported, but if the call was interrupted the function should just be called again.
+
+Files will be read directly by read transactions (which we will implement later), so the system calls mmap and unmmap are wrapped in two functions xnfile_mmap and xnfile_munmap.
+
 
 ## Paging
 Rather than dealing with files directly, persistent data structures using in XenonDB will work with page-level

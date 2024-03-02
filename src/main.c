@@ -413,15 +413,15 @@ __attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx) {
 __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     assert(tx->mode == XNTXMODE_WR);
 
-    //TODO append writes to log, sync - this is a placeholder
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
+
     uint8_t *rec;
     size_t rec_size;
     xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, &rec, &rec_size));
     xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
     free(rec);
-
     tx->db->committed_wrtx = tx;
+
     xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
 
     //TODO remaining code should run asynchronously (eg, no more readers in next tbl)
