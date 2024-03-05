@@ -182,10 +182,9 @@ struct xnlog {
 };
 
 struct xnlogitr {
-    struct xnfile *file_handle;
-    struct xntx *rdtx;
-    int page_idx;
+    struct xnpg page;
     int page_off;
+    uint8_t *buf;
 };
 
 
@@ -205,15 +204,14 @@ struct xndb {
     int tx_id_counter;
 };
 
-__attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx);
-__attribute__((warn_unused_result)) bool xnlogitr_create(struct xndb *db, struct xnlogitr **out_itr) {
+__attribute__((warn_unused_result)) bool xnlogitr_create(struct xnlog *log, struct xnlogitr **out_itr) {
     struct xnlogitr *itr;
     xn_ensure(xn_malloc(sizeof(struct xnlogitr), (void**)&itr));
-
-    itr->file_handle = db->log->page.file_handle;
-    itr->page_idx = 0;
+    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&itr->buf));
+    itr->page = log->page;
+    itr->page.idx = 0;
     itr->page_off = -1;
-    xn_ensure(xntx_create(db, XNTXMODE_RD, &itr->rdtx));
+    xn_ensure(xnpg_read(&itr->page, itr->buf));
 
     *out_itr = itr;
     return xn_ok();
@@ -223,42 +221,68 @@ __attribute__((warn_unused_result)) bool xntx_read_ptr(struct xntx *tx, struct x
 void xnlog_deserialize_header(uint8_t* buf, int *tx_id, enum xnlogt *type, size_t *data_size);
 size_t xnlog_record_size(size_t data_size);
 
+__attribute__((warn_unused_result)) bool xnlogitr_read_header(const struct xnlogitr *itr, int *tx_id, enum xnlogt *type, size_t *data_size) {
+    const size_t header_size = sizeof(int) + sizeof(enum xnlogt) + sizeof(size_t);
+    uint8_t hdr_buf[header_size];
+
+    struct xnpg page = itr->page;
+    int page_off = itr->page_off;
+    uint8_t *page_buf;
+    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&page_buf));
+    xn_ensure(xnpg_read(&page, page_buf));
+
+    size_t nread = 0;
+    while (nread < header_size) {
+        size_t to_read = header_size - nread;
+        size_t remaining = XNPG_SZ - page_off;
+        size_t s = to_read < remaining ? to_read : remaining;
+        memcpy(hdr_buf + nread, page_buf + page_off, s);
+
+        nread += s;
+        page_off += s;
+
+        if (page_off >= XNPG_SZ) {
+            page_off = 0;
+            page.idx++;
+            xn_ensure(xnpg_read(&page, page_buf));
+        }
+    }
+
+    free(page_buf);
+
+    *tx_id = *((int*)hdr_buf);
+    *type = *((enum xnlogt*)(hdr_buf + sizeof(int)));
+    *data_size = *((size_t*)(hdr_buf + sizeof(int) + sizeof(enum xnlogt)));
+
+    return xn_ok();
+}
+
 bool xnlogitr_next(struct xnlogitr *itr) {
-    if (itr->page_off < 0) {
-        itr->page_idx = 0;
+    if (itr->page_off == -1) {
         itr->page_off = 0;
     } else {
-        uint8_t *buf;
-        struct xnpg page = { .file_handle = itr->file_handle, .idx = itr->page_idx };
-        xn_ensure(xntx_read_ptr(itr->rdtx, &page, &buf));
         int tx_id;
         enum xnlogt type;
         size_t data_size;
-        xnlog_deserialize_header(buf, &tx_id, &type, &data_size);
+        xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
+
         itr->page_off += xnlog_record_size(data_size);
+        while (itr->page_off >= XNPG_SZ) {
+            itr->page_off -= XNPG_SZ;
+            itr->page.idx++;
+        }
+        xn_ensure(xnpg_read(&itr->page, itr->buf));
     }
 
-
-    uint8_t *buf;
-    struct xnpg page = { .file_handle = itr->file_handle, .idx = itr->page_idx };
-    xn_ensure(xntx_read_ptr(itr->rdtx, &page, &buf));
-    buf += itr->page_off;
     int tx_id;
     enum xnlogt type;
     size_t data_size;
-    xnlog_deserialize_header(buf, &tx_id, &type, &data_size);
-    printf("page idx: %d, page_off: %d, tx_id: %d\n", itr->page_idx, itr->page_off, tx_id);
-    //check if valid log record (checksum), and return false (+include error message)
-    if (tx_id == 0) {
-        //attempt to load in next page index
-        return false;
-    }
-    return true;
+    xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
+    return tx_id != 0; //tx_id of 0 means no more log records left
 }
 
-__attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx);
 __attribute__((warn_unused_result)) bool xnlogitr_free(struct xnlogitr *itr) {
-    xn_ensure(xntx_free(itr->rdtx));
+    free(itr->buf);
     free(itr);
     return xn_ok();
 }
@@ -269,12 +293,19 @@ __attribute__((warn_unused_result)) bool xnlog_create(const char *log_path, stru
     xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
 
     xn_ensure(xnfile_create("log", true, &log->page.file_handle));
-    log->page.idx = 0; //TODO use logitr to iterate to the end of the log
-    log->page_off = 0; //TODO use logitr to iterate to the end of the log
     xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
 
+    //make iterator here to get last record offset
+    struct xnlogitr *itr;
+    xn_ensure(xnlogitr_create(log, &itr));
+    while (xnlogitr_next(itr))
+        ;
+    log->page.idx = itr->page.idx;
+    log->page_off = itr->page_off;
+    xn_ensure(xnlogitr_free(itr));
+
     xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&log->buf));
-    memset(log->buf, 0, XNPG_SZ);
+    xn_ensure(xnpg_read(&log->page, log->buf));
     
     log->highest_tx_flushed = -1;
 
@@ -310,12 +341,6 @@ __attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, const u
     return xn_ok();
 }
 
-void xnlog_deserialize_header(uint8_t* buf, int *tx_id, enum xnlogt *type, size_t *data_size) {
-    *tx_id = *((int*)buf);
-    *type = *((enum xnlogt*)(buf + sizeof(int)));
-    *data_size = *((size_t*)(buf + sizeof(int) + sizeof(enum xnlogt)));
-}
-
 size_t xnlog_record_size(size_t data_size) {
     size_t size = sizeof(int);      //tx id
     size += sizeof(enum xnlogt);    //log type
@@ -347,26 +372,16 @@ __attribute__((warn_unused_result)) bool xnlog_serialize_record(int tx_id,
 }
 
 __attribute__((warn_unused_result)) bool xndb_recover(struct xndb *db) {
-    /*
     struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(db, &itr));
-    int txstart_pg_idx = -1;
-    int txstart_rec_off = -1;
+    xn_ensure(xnlogitr_create(db->log, &itr));
     while (xnlogitr_next(itr)) {
-        //if we see a XNLOGT_START, save the page idx + offset
-        //if we see updates, skip them for now
-        //if we see XNLOGT_COMMIT
-        //  make a new iterator, seek to start page + offset
-        //  for each update log record, apply the afterimage to disk 
+        int tx_id;
+        enum xnlogt type;
+        size_t data_size;
+        xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
+        printf("tx id: %d, type: %d, data size: %ld\n", tx_id, type, data_size);
     }
-    xn_ensure(xnlogitr_free(itr));*/
-    /*
-    struct xnpg page = { .file_handle = db->log->file_handle, .idx = 0 };
-    uint8_t *buf;
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&buf));
-    xn_ensure(xnpg_read(&page, buf));
-    printf("recovering...\n");
-    free(buf);*/
+    xn_ensure(xnlogitr_free(itr));
     return xn_ok();
 }
 
