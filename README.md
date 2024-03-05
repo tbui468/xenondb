@@ -46,24 +46,21 @@ struct xnfile {
     size_t size;
 };
 
-Creating a new xnfile is done with xnfile_create.  The absolute path of the file is saved rather than the relative path.  The second argument specifies whether the file should be opened with the O_DIRECT flag.  
+Creating a new xnfile is done with xnfile_create.  The absolute path of the file is saved rather than the relative path.  The second argument specifies whether the any writes on this file should be on stable storage before returning.  When writing data to disk, there are a few places where the data could be buffered - used libraries, the OS kernel and on the disk itself.  Buffering improves performance but sometimes we need to ensure that data is written to stable storage and the performance hit is acceptable.  O_DIRECT tells the kernel to bypass the kernel cache and write directly to the device.  O_SYNC and O_DATASYNC does a synchronous write to storage, BUT this data still may be cached by the storage device.  A system failure would result in lost data in that case.  In order to guarantee it's in stable storage and won't disappear on system failure, we also need to call fsync (or fdatasync) to flush or write-through the disk cache.  fsync returns when data is in permanent storage.  The parent directory will be synced everytime the file size is changed, so we will use O_DATASYNC to write only the data synchronously.  In summary, any writes that we want to ensure are in stable storage will be done on a file opened with the flags O_DIRECT and O_DATASYNC, and then fsync will be called to flush the disk cache.
 
-When writing data to disk, there are a few places where the data could be buffered - used libraries, the OS kernel and on the disk itself.  Buffering improves performance but sometimes we need to ensure that data is written to stable storage and the performance hit is acceptable.  
+![write caches from program to disk](caches.png)
 
-O_DIRECT tells the kernel to bypass the kernel cache and write directly to the device.  [NEED TO READ THAT LINUX FILE SYSTEM ARTICLE AGAIN]
-
-xnfile_sync_parent is necessary to ensure that file metadata is saved to stable storage.  Is a file's metadata saved in parent directory???
-
-xnfile_set_size
-
-xnfile_sync
-
-xnfile_close will close the file descriptor and free the struct from memory.
+xnfile_sync_parent is necessary to ensure that file metadata is saved to stable storage.  This is called whenever a files metadata is changed (when first creating a file or when a file size is changed).
 
 xnfile_read and xnfile_write will read and write to a file, respectively.  Both the read and write system calls may return without reading/writing all the requested bytes, so they are called in a loop until all the requested bytes are processed.  read and write will return a -1 for errors and also if the function was interrupted before processing any bytes.  errno will be set to EINTR if the function was interrupted.  Errors should be reported, but if the call was interrupted the function should just be called again.
 
-Files will be read directly by read transactions (which we will implement later), so the system calls mmap and unmmap are wrapped in two functions xnfile_mmap and xnfile_munmap.
+Read transactions (implemented later) will read data from the files on disk - the system calls mmap and unmmap are wrapped in two functions xnfile_mmap and xnfile_munmap.
 
+xnfile_set_size changes the file size.
+
+xnfile_sync calls fsync to flush the disk cache.  fsync is a very expensive system call, so we will avoid calling it unless necessary.  
+
+xnfile_close will close the file descriptor and free the struct from memory.
 
 ## Paging
 Rather than dealing with files directly, persistent data structures using in XenonDB will work with page-level

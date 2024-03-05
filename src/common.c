@@ -15,6 +15,7 @@ bool xn_aligned_malloc(size_t size, void **ptr) {
     struct stat fstat;
     xn_ensure(stat("/", &fstat) == 0);
     size_t block_size = fstat.st_blksize;
+    xn_ensure(size % block_size == 0);
 
     return posix_memalign(ptr, block_size, size) == 0;
 }

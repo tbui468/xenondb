@@ -4,8 +4,7 @@
 #define XNPGID_METADATA 0
 #define XNTBL_MAX_BUCKETS 128
 #define XNPG_SZ 4096
-#define XNLOG_MAX_PGS 32
-#define XNLOG_BUF_SZ XNPG_SZ * 2
+#define XNLOG_BUF_SZ XNPG_SZ
 #include <stdlib.h> //free
 #include <assert.h>
 #include <errno.h>
@@ -23,6 +22,16 @@ struct xnpg {
     struct xnfile *file_handle;
     uint64_t idx;
 };
+
+__attribute__((warn_unused_result)) bool xnpg_write(struct xnpg *page, const uint8_t *buf) {
+    xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *buf) {
+    xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
+    return xn_ok();
+}
 
 __attribute__((warn_unused_result)) bool xnpg_mmap(struct xnpg *page, uint8_t **ptr) {
     xn_ensure(xnfile_mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
@@ -166,89 +175,19 @@ enum xnlogt {
 
 struct xnlog {
     uint8_t *buf;
-    int count;
-    int capacity;
+    int page_off;
+
     int highest_tx_flushed;
-    struct xnfile *file_handle;
-    int page_idx;
+    struct xnpg page;
 };
 
-__attribute__((warn_unused_result)) bool xnlog_create(const char *log_path, struct xnlog **out_log) {
-    struct xnlog *log;
-    xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
+struct xnlogitr {
+    struct xnfile *file_handle;
+    struct xntx *rdtx;
+    int page_idx;
+    int page_off;
+};
 
-    xn_ensure(xnfile_create("log", true, &log->file_handle));
-    xn_ensure(xnfile_set_size(log->file_handle, XNLOG_MAX_PGS * XNPG_SZ));
-
-    log->capacity = XNLOG_BUF_SZ;
-    log->count = 0;
-    xn_ensure(xn_aligned_malloc(log->capacity, (void**)&log->buf));
-    
-    log->highest_tx_flushed = -1;
-    log->page_idx = 0;
-
-    *out_log = log;
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xnlog_flush(struct xnlog *log, bool is_full) {
-    xn_ensure(xnfile_write(log->file_handle, log->buf, log->page_idx * XNPG_SZ, log->capacity));
-    xn_ensure(xnfile_sync(log->file_handle));
-
-    if (is_full) {
-        log->count = 0;
-        log->highest_tx_flushed = -1; //TODO need to set this to highest committed tx on this page
-        log->page_idx++;
-        assert(log->page_idx < XNLOG_MAX_PGS && "over hard-coded maximum log pages - should grow file dynamically");
-    }
-
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xnlog_serialize_record(int tx_id, 
-                                                                enum xnlogt type, 
-                                                                size_t data_size, 
-                                                                uint8_t *data, 
-                                                                uint8_t **out_buf,
-                                                                size_t *out_size) {
-    size_t size = sizeof(int);      //tx id
-    size += sizeof(enum xnlogt);    //log type
-    size += sizeof(size_t);         //data size 
-    size += data_size;              //data
-    size += sizeof(uint32_t);       //checksum
-
-    uint8_t *buf;
-    xn_ensure(xn_malloc(size, (void**)&buf));
-
-    off_t off = 0;
-    memcpy(buf + off, &tx_id, sizeof(int));
-    off += sizeof(int);
-    memcpy(buf + off, &type, sizeof(enum xnlogt));
-    off += sizeof(enum xnlogt);
-    memcpy(buf + off, &data_size, sizeof(size_t));
-    off += sizeof(size_t);
-    memcpy(buf + off, data, data_size);
-    off += data_size;
-    uint32_t checksum = xn_hash(buf, off);
-    memcpy(buf + off, &checksum, sizeof(uint32_t));
-    off += sizeof(uint32_t);
-
-    *out_buf = buf;
-    *out_size = size;
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
-    assert(size <= XNLOG_BUF_SZ);
-
-    if (log->count + size > log->capacity) {
-        xn_ensure(xnlog_flush(log, true));
-    }
-
-    memcpy(log->buf + log->count, log_record, size);
-    log->count += size;
-    return xn_ok();
-}
 
 struct xndb {
     struct xnlog *log;
@@ -265,6 +204,171 @@ struct xndb {
     pthread_mutex_t tx_id_counter_lock;
     int tx_id_counter;
 };
+
+__attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx);
+__attribute__((warn_unused_result)) bool xnlogitr_create(struct xndb *db, struct xnlogitr **out_itr) {
+    struct xnlogitr *itr;
+    xn_ensure(xn_malloc(sizeof(struct xnlogitr), (void**)&itr));
+
+    itr->file_handle = db->log->page.file_handle;
+    itr->page_idx = 0;
+    itr->page_off = -1;
+    xn_ensure(xntx_create(db, XNTXMODE_RD, &itr->rdtx));
+
+    *out_itr = itr;
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xntx_read_ptr(struct xntx *tx, struct xnpg *page, uint8_t **out_ptr);
+void xnlog_deserialize_header(uint8_t* buf, int *tx_id, enum xnlogt *type, size_t *data_size);
+size_t xnlog_record_size(size_t data_size);
+
+bool xnlogitr_next(struct xnlogitr *itr) {
+    if (itr->page_off < 0) {
+        itr->page_idx = 0;
+        itr->page_off = 0;
+    } else {
+        uint8_t *buf;
+        struct xnpg page = { .file_handle = itr->file_handle, .idx = itr->page_idx };
+        xn_ensure(xntx_read_ptr(itr->rdtx, &page, &buf));
+        int tx_id;
+        enum xnlogt type;
+        size_t data_size;
+        xnlog_deserialize_header(buf, &tx_id, &type, &data_size);
+        itr->page_off += xnlog_record_size(data_size);
+    }
+
+
+    uint8_t *buf;
+    struct xnpg page = { .file_handle = itr->file_handle, .idx = itr->page_idx };
+    xn_ensure(xntx_read_ptr(itr->rdtx, &page, &buf));
+    buf += itr->page_off;
+    int tx_id;
+    enum xnlogt type;
+    size_t data_size;
+    xnlog_deserialize_header(buf, &tx_id, &type, &data_size);
+    printf("page idx: %d, page_off: %d, tx_id: %d\n", itr->page_idx, itr->page_off, tx_id);
+    //check if valid log record (checksum), and return false (+include error message)
+    if (tx_id == 0) {
+        //attempt to load in next page index
+        return false;
+    }
+    return true;
+}
+
+__attribute__((warn_unused_result)) bool xntx_free(struct xntx *tx);
+__attribute__((warn_unused_result)) bool xnlogitr_free(struct xnlogitr *itr) {
+    xn_ensure(xntx_free(itr->rdtx));
+    free(itr);
+    return xn_ok();
+}
+
+
+__attribute__((warn_unused_result)) bool xnlog_create(const char *log_path, struct xnlog **out_log) {
+    struct xnlog *log;
+    xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
+
+    xn_ensure(xnfile_create("log", true, &log->page.file_handle));
+    log->page.idx = 0; //TODO use logitr to iterate to the end of the log
+    log->page_off = 0; //TODO use logitr to iterate to the end of the log
+    xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
+
+    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&log->buf));
+    memset(log->buf, 0, XNPG_SZ);
+    
+    log->highest_tx_flushed = -1;
+
+    *out_log = log;
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xnlog_flush(struct xnlog *log) {
+    xn_ensure(xnpg_write(&log->page, log->buf));
+    xn_ensure(xnfile_sync(log->page.file_handle));
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
+    size_t written = 0;
+    while (written < size) {
+        size_t to_write = size - written;
+        size_t remaining = XNPG_SZ - log->page_off;
+        size_t s = remaining < to_write ? remaining : to_write;
+        memcpy(log->buf + log->page_off, log_record + written, s);
+
+        log->page_off += s;
+        written += s;
+
+        //log buffer full
+        if (log->page_off == XNPG_SZ) {
+            xn_ensure(xnlog_flush(log));
+            log->page.idx++;
+            log->page_off = 0;
+        }
+    }
+
+    return xn_ok();
+}
+
+void xnlog_deserialize_header(uint8_t* buf, int *tx_id, enum xnlogt *type, size_t *data_size) {
+    *tx_id = *((int*)buf);
+    *type = *((enum xnlogt*)(buf + sizeof(int)));
+    *data_size = *((size_t*)(buf + sizeof(int) + sizeof(enum xnlogt)));
+}
+
+size_t xnlog_record_size(size_t data_size) {
+    size_t size = sizeof(int);      //tx id
+    size += sizeof(enum xnlogt);    //log type
+    size += sizeof(size_t);         //data size 
+    size += data_size;              //data
+    size += sizeof(uint32_t);       //checksum
+    return size;
+}
+
+__attribute__((warn_unused_result)) bool xnlog_serialize_record(int tx_id, 
+                                                                enum xnlogt type, 
+                                                                size_t data_size, 
+                                                                uint8_t *data, 
+                                                                uint8_t *buf) {
+    off_t off = 0;
+    memcpy(buf + off, &tx_id, sizeof(int));
+    off += sizeof(int);
+    memcpy(buf + off, &type, sizeof(enum xnlogt));
+    off += sizeof(enum xnlogt);
+    memcpy(buf + off, &data_size, sizeof(size_t));
+    off += sizeof(size_t);
+    memcpy(buf + off, data, data_size);
+    off += data_size;
+    uint32_t checksum = xn_hash(buf, off);
+    memcpy(buf + off, &checksum, sizeof(uint32_t));
+    off += sizeof(uint32_t);
+
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xndb_recover(struct xndb *db) {
+    /*
+    struct xnlogitr *itr;
+    xn_ensure(xnlogitr_create(db, &itr));
+    int txstart_pg_idx = -1;
+    int txstart_rec_off = -1;
+    while (xnlogitr_next(itr)) {
+        //if we see a XNLOGT_START, save the page idx + offset
+        //if we see updates, skip them for now
+        //if we see XNLOGT_COMMIT
+        //  make a new iterator, seek to start page + offset
+        //  for each update log record, apply the afterimage to disk 
+    }
+    xn_ensure(xnlogitr_free(itr));*/
+    /*
+    struct xnpg page = { .file_handle = db->log->file_handle, .idx = 0 };
+    uint8_t *buf;
+    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&buf));
+    xn_ensure(xnpg_read(&page, buf));
+    printf("recovering...\n");
+    free(buf);*/
+    return xn_ok();
+}
 
 __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struct xndb **out_db) {
     struct xndb *db;
@@ -288,6 +392,8 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
 
     xn_ensure(pthread_mutex_init(&db->tx_id_counter_lock, NULL) == 0);
     db->tx_id_counter = 1;
+
+    xn_ensure(xndb_recover(db));
 
     *out_db = db;
     return xn_ok();
@@ -333,8 +439,9 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
         xn_ensure(xntbl_create(&tx->mod_pgs));
 
         uint8_t *rec;
-        size_t rec_size;
-        xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, &rec, &rec_size));
+        size_t rec_size = xnlog_record_size(0);
+        xn_ensure(xn_malloc(rec_size, (void**)&rec));
+        xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, rec));
         xn_ensure(xnlog_append(db->log, rec, rec_size));
         free(rec);
     } else {
@@ -350,16 +457,6 @@ __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxm
     }
     tx->mode = mode;
     *out_tx = tx;
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xnpg_write(struct xnpg *page, const uint8_t *buf) {
-    xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
-    return xn_ok();
-}
-
-__attribute__((warn_unused_result)) bool xnpg_read(struct xnpg *page, uint8_t *buf) {
-    xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
     return xn_ok();
 }
 
@@ -416,8 +513,9 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
 
     uint8_t *rec;
-    size_t rec_size;
-    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, &rec, &rec_size));
+    size_t rec_size = xnlog_record_size(0);
+    xn_ensure(xn_malloc(rec_size, (void**)&rec));
+    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));
     xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
     free(rec);
     tx->db->committed_wrtx = tx;
@@ -428,7 +526,7 @@ __attribute__((warn_unused_result)) bool xntx_commit(struct xntx *tx) {
   
     //TODO writing data to disk when 1. next table has no more readers (it will have one writer - this current tx itself.  But this tx is committed already) 
     xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, &tx->db->rdtx_count_lock, &disk_rdtxs_cv));
-    xn_ensure(xnlog_flush(tx->db->log, false));
+    xn_ensure(xnlog_flush(tx->db->log));
     xn_ensure(xntx_flush_writes(tx));
 
     xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
@@ -474,12 +572,34 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
     memcpy(update_data + sizeof(int) * 2, buf, size);
 
     uint8_t *rec;
-    size_t rec_size;
-    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_UPDATE, data_size, update_data, &rec, &rec_size));
+    size_t rec_size = xnlog_record_size(data_size);
+    xn_ensure(xn_malloc(rec_size, (void**)&rec));
+    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_UPDATE, data_size, update_data, rec));
     xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
 
     free(rec);
     free(update_data);
+
+    return xn_ok();
+}
+
+__attribute__((warn_unused_result)) bool xntx_read_ptr(struct xntx *tx, struct xnpg *page, uint8_t **out_ptr) {
+    if (tx->mode == XNTXMODE_WR || tx->mod_pgs) {
+        uint8_t *cpy;
+
+        if ((cpy = xntbl_find(tx->mod_pgs, page))) {
+            *out_ptr = cpy;
+            return xn_ok();
+        }
+    }
+
+    uint8_t *ptr;
+    if (!(ptr = xntbl_find(tx->db->pg_tbl, page))) {
+        xn_ensure(xnpg_mmap(page, &ptr));
+        xn_ensure(xntbl_insert(tx->db->pg_tbl, page, ptr));
+    }
+
+    *out_ptr = ptr;
 
     return xn_ok();
 }
@@ -603,6 +723,7 @@ int main(int argc, char** argv) {
     if (!xndb_create("students", &db))
         printf("failed\n");
 
+    /*
     //multi-threaded test
     const int THREAD_COUNT = 24;
     pthread_t threads[THREAD_COUNT];
@@ -615,9 +736,8 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
-    }
+    }*/
 
-/*
     //single threaded test
     {
         struct xntx *tx;
@@ -634,6 +754,7 @@ int main(int argc, char** argv) {
             printf("failed\n");
     }
 
+    /*
     { 
         struct xntx *tx;
         if (!xntx_create(db, XNTXMODE_WR, &tx))
