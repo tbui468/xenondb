@@ -226,9 +226,15 @@ __attribute__((warn_unused_result)) bool xnlogitr_seek(struct xnlogitr *itr, uin
 
 __attribute__((warn_unused_result)) bool xnlogitr_read_span(const struct xnlogitr *itr, uint8_t *buf, off_t off, size_t size) {
     struct xnpg page = itr->page;
-    int page_off = itr->page_off;
     uint8_t *page_buf;
     xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&page_buf));
+
+    int page_off = itr->page_off + off;
+    if (page_off >= XNPG_SZ) {
+        page_off -= XNPG_SZ;
+        page.idx++;
+    }
+
     xn_ensure(xnpg_read(&page, page_buf));
 
     size_t nread = 0;
@@ -241,7 +247,7 @@ __attribute__((warn_unused_result)) bool xnlogitr_read_span(const struct xnlogit
         nread += s;
         page_off += s;
 
-        if (page_off >= XNPG_SZ) {
+        if (page_off == XNPG_SZ) {
             page_off = 0;
             page.idx++;
             xn_ensure(xnpg_read(&page, page_buf));
@@ -338,6 +344,7 @@ __attribute__((warn_unused_result)) bool xnlog_flush(struct xnlog *log) {
 }
 
 __attribute__((warn_unused_result)) bool xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
+    printf("log offset: %d\n", log->page_off);
     size_t written = 0;
     while (written < size) {
         size_t to_write = size - written;
@@ -596,7 +603,6 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
         memcpy(update_data, &page->idx, sizeof(uint64_t));
         memcpy(update_data + sizeof(uint64_t), &offset, sizeof(int));
         memcpy(update_data + sizeof(uint64_t) + sizeof(int), buf, size);
-        printf("logging: page idx: %ld, page offset: %d\n", page->idx, offset);
 
         uint8_t *rec;
         size_t rec_size = xnlog_record_size(data_size);
@@ -694,7 +700,6 @@ __attribute__((warn_unused_result)) bool xntx_allocate_page(struct xntx *tx, str
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
 
     xn_ensure(xntx_find_free_page(tx, &meta_page, page));
-    printf("new page idx: %ld\n", page->idx);
 
     //zero out new page data
     __attribute__((cleanup(xn_cleanup_free))) uint8_t *buf;
@@ -725,7 +730,9 @@ __attribute__((warn_unused_result)) bool xnlog_redo(struct xnlog *log, struct xn
             uint8_t *buf;
             xn_ensure(xn_malloc(data_size, (void**)&buf));
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
-            struct xnpg page = { .file_handle = log->page.file_handle, .idx = *((uint64_t*)buf) };
+
+            //writing changes back to file (not the log)
+            struct xnpg page = { .file_handle = tx->db->file_handle, .idx = *((uint64_t*)buf) };
             size_t data_hdr_size = sizeof(uint64_t) + sizeof(int);
             int off = *((int*)(buf + sizeof(uint64_t)));
             size_t size = data_size - data_hdr_size;
@@ -754,17 +761,19 @@ __attribute__((warn_unused_result)) bool xndb_recover(struct xndb *db) {
         size_t data_size;
         xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
         if (type == XNLOGT_START) {
+            printf("setting start tx: %d\n", tx_id);
             start_pageidx = itr->page.idx;
             start_pageoff = itr->page_off;
             start_txid = tx_id;
         } else if (type == XNLOGT_COMMIT && start_txid == tx_id) {
+            printf("redoing tx: %d\n", tx_id);
             xn_ensure(xnlog_redo(db->log, tx, start_pageidx, start_pageoff, start_txid));
         }
     }
 
     xn_ensure(xnlogitr_free(itr));
     xn_ensure(xntx_flush_writes(tx));
-    xn_ensure(xntx_free(tx));
+    xn_ensure(xntx_commit(tx));
     return xn_ok();
 }
 
