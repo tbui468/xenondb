@@ -88,8 +88,8 @@ struct xntbl {
 
 __attribute__((warn_unused_result)) bool xntbl_create(struct xntbl **out_tbl) {
     struct xntbl *tbl;
-    xn_ensure((tbl = malloc(sizeof(struct xntbl))) != NULL);
-    xn_ensure((tbl->entries = malloc(sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS)) != NULL);
+    xn_ensure(xn_malloc(sizeof(struct xntbl), (void**)&tbl));
+    xn_ensure(xn_malloc(sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS, (void**)&tbl->entries));
     memset(tbl->entries, 0, sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS);
 
     *out_tbl = tbl;
@@ -156,7 +156,7 @@ __attribute__((warn_unused_result)) bool xntbl_insert(struct xntbl *tbl, struct 
     //insert at beginning of linked-list
     struct xnentry* head = tbl->entries[bucket];
     struct xnentry* entry;
-    xn_ensure((entry = malloc(sizeof(struct xnentry))) != NULL);
+    xn_ensure(xn_malloc(sizeof(struct xnentry), (void**)&entry));
     entry->next = head;
     entry->pg_idx = page->idx;
     entry->val = val;
@@ -458,7 +458,7 @@ struct xntx {
 
 __attribute__((warn_unused_result)) bool xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
     struct xntx *tx;
-    xn_ensure((tx = malloc(sizeof(struct xntx))) != NULL);
+    xn_ensure(xn_malloc(sizeof(struct xntx), (void**)&tx));
 
     xn_ensure(pthread_mutex_lock(&db->tx_id_counter_lock) == 0);
     tx->id = db->tx_id_counter++;
@@ -588,7 +588,7 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
     uint8_t *cpy;
 
     if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
-        xn_ensure((cpy = malloc(XNPG_SZ)) != NULL);
+        xn_ensure(xn_malloc(XNPG_SZ, (void**)&cpy));
         xn_ensure(xnpg_read(page, cpy));
         xn_ensure(xntbl_insert(tx->mod_pgs, page, cpy));
     }
@@ -699,7 +699,7 @@ __attribute__((warn_unused_result)) bool xntx_allocate_page(struct xntx *tx, str
 
     //zero out new page data
     _xn_defer_free_ uint8_t *buf;
-    xn_ensure((buf = malloc(XNPG_SZ)) != NULL);
+    xn_ensure(xn_malloc(XNPG_SZ, (void**)&buf));
     memset(buf, 0, XNPG_SZ);
     xn_ensure(xntx_write(tx, page, buf, 0, XNPG_SZ, true));
 

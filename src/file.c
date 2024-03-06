@@ -24,11 +24,13 @@ static __attribute__((warn_unused_result)) bool xnfile_sync_parent(const char* c
 
 __attribute__((warn_unused_result)) bool xnfile_create(const char *relpath, bool direct, struct xnfile **out_handle) {
     struct xnfile *handle;
-    xn_ensure((handle = malloc(sizeof(struct xnfile))) != NULL);
+    xn_ensure(xn_malloc(sizeof(struct xnfile), (void**)&handle));
+
+    //TODO if an error occurs after this line, need to free handle - how can we do this in a readable way?
 
     char buf[PATH_MAX];
     xn_ensure(realpath(relpath, buf) != NULL);
-    xn_ensure((handle->path = malloc(strlen(buf) + 1)) != NULL);
+    xn_ensure(xn_malloc(strlen(buf) + 1, (void**)&handle->path));
     strcpy(handle->path, buf);
 
     int flags = O_CREAT | O_RDWR;
