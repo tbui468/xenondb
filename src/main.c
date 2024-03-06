@@ -403,7 +403,10 @@ __attribute__((warn_unused_result)) bool xndb_create(const char *dir_path, struc
 
     xn_ensure(xnfile_create(dir_path, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
-    uint8_t buf = 1;
+    uint8_t buf;
+    xn_ensure(xnfile_read(db->file_handle, &buf, 0, sizeof(uint8_t)));
+    uint8_t hdr_bit = 1;
+    buf |= hdr_bit;
     xn_ensure(xnfile_write(db->file_handle, &buf, 0, sizeof(uint8_t)));
     xn_ensure(xnfile_sync(db->file_handle));
 
@@ -593,6 +596,7 @@ __attribute__((warn_unused_result)) bool xntx_write(struct xntx *tx, struct xnpg
         memcpy(update_data, &page->idx, sizeof(uint64_t));
         memcpy(update_data + sizeof(uint64_t), &offset, sizeof(int));
         memcpy(update_data + sizeof(uint64_t) + sizeof(int), buf, size);
+        printf("logging: page idx: %ld, page offset: %d\n", page->idx, offset);
 
         uint8_t *rec;
         size_t rec_size = xnlog_record_size(data_size);
@@ -725,8 +729,8 @@ __attribute__((warn_unused_result)) bool xnlog_redo(struct xnlog *log, struct xn
             size_t data_hdr_size = sizeof(uint64_t) + sizeof(int);
             int off = *((int*)(buf + sizeof(uint64_t)));
             size_t size = data_size - data_hdr_size;
-            printf("redoing tx: %d, size: %ld, page idx: %ld, page off: %d\n", tx_id, size, page_idx, page_off);
-            //xn_ensure(xntx_write(tx, &page, buf + data_hdr_size, off, size, false));
+            printf("redoing tx: %d, size: %ld, page idx: %ld, page off: %d\n", tx_id, size, page.idx, off);
+            xn_ensure(xntx_write(tx, &page, buf + data_hdr_size, off, size, false));
             free(buf);
         }
     }
