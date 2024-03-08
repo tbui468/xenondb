@@ -43,15 +43,10 @@ bool xn_aligned_malloc(size_t size, void **ptr) {
                         free(_defer_ptrs_[_i_]); \
                     }
 
-#define xnmm_err_cleanup() for (int _i_ = _all_ptr_count_ - 1; _i_ >= 0; _i_--) { \
-                        free(_all_ptrs_[_i_]); \
-                    }
-
 
 extern char _xnerr_buf[1024];
 
-//#define xn_ok() ({ for (int _i_ = _all_ptr_count_ - 1; _i_ >= 0; _i_--) free(_all_ptrs_[_i_]); true; })
-#define xn_ok() true
+#define xn_ok() ({ for (int _i_ = _defer_ptr_count_ - 1; _i_ >= 0; _i_--) free(_defer_ptrs_[_i_]); true; })
 
 /*
 #define xn_failed(msg) ({ strcat(_xnerr_buf, "'"); \
@@ -68,7 +63,9 @@ extern char _xnerr_buf[1024];
 
 #define xnerr_tostring() _xnerr_buf
 
-#define xn_ensure(b) if (!(b)) { printf("%s\n", __func__); return false; }
+#define xn_ensure(b) if (!(b)) ({ printf("%s\n", __func__); \
+                                 for (int _i_ = _all_ptr_count_ - 1; _i_ >= 0; _i_--) free(_all_ptrs_[_i_]); \
+                                 return false; })
 
 bool xn_malloc(size_t size, void **ptr);
 bool xn_aligned_malloc(size_t size, void **ptr);
