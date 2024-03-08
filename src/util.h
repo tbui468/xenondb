@@ -39,5 +39,6 @@ xnresult_t xn_mutex_destroy(pthread_mutex_t *lock);
 xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock);
 xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv);
 xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock);
+xnresult_t xn_wait_until_zero(int *count, pthread_mutex_t *lock, pthread_cond_t *cv);
 
 uint32_t xn_hash(const uint8_t *buf, int length);
