@@ -2,13 +2,13 @@
 #include "file.h"
 #include "util.h"
 
-xnresult_t xnpg_write(struct xnpg *page, const uint8_t *buf) {
+xnresult_t xnpg_flush(struct xnpg *page, const uint8_t *buf) {
     xnmm_init();
     xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
     return xn_ok();
 }
 
-xnresult_t xnpg_read(struct xnpg *page, uint8_t *buf) {
+xnresult_t xnpg_copy(struct xnpg *page, uint8_t *buf) {
     xnmm_init();
     xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
     return xn_ok();

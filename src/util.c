@@ -135,3 +135,14 @@ xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
     xn_ensure(xn_mutex_unlock(lock));
     return xn_ok();
 }
+
+//hash function from 'Crafting Interpreters'
+uint32_t xn_hash(const uint8_t *buf, int length) {
+    uint32_t hash = 2166136261u;
+    for (int i = 0; i < length; i++) {
+        hash ^= buf[i];
+        hash *= 16777619;
+    }
+    return hash;
+}
+

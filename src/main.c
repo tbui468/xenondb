@@ -64,16 +64,6 @@ xnresult_t xntbl_free(struct xntbl *tbl, bool unmap) {
     return xn_ok();
 }
 
-//hash function from 'Crafting Interpreters'
-static uint32_t xn_hash(const uint8_t *buf, int length) {
-    uint32_t hash = 2166136261u;
-    for (int i = 0; i < length; i++) {
-        hash ^= buf[i];
-        hash *= 16777619;
-    }
-    return hash;
-}
-
 uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
     uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
@@ -119,27 +109,6 @@ enum xntxmode {
     XNTXMODE_WR
 };
 
-enum xnlogt {
-    XNLOGT_START,
-    XNLOGT_UPDATE,
-    XNLOGT_COMMIT
-};
-
-struct xnlog {
-    uint8_t *buf;
-    int page_off;
-
-    int highest_tx_flushed;
-    struct xnpg page;
-};
-
-struct xnlogitr {
-    struct xnpg page;
-    int page_off;
-    uint8_t *buf;
-};
-
-
 struct xndb {
     struct xnlog *log;
     pthread_mutex_t wrtx_lock;
@@ -156,209 +125,8 @@ struct xndb {
     int tx_id_counter;
 };
 
-xnresult_t xnlogitr_create(struct xnlog *log, struct xnlogitr **out_itr) {
-    xnmm_init();
-    struct xnlogitr *itr;
-    xn_ensure(xn_malloc(sizeof(struct xnlogitr), (void**)&itr));
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&itr->buf));
-    itr->page = log->page;
-    itr->page.idx = 0;
-    itr->page_off = -1;
-    xn_ensure(xnpg_read(&itr->page, itr->buf));
-
-    *out_itr = itr;
-    return xn_ok();
-}
-
-xnresult_t xnlogitr_seek(struct xnlogitr *itr, uint64_t page_idx, int page_off) {
-    xnmm_init();
-    itr->page.idx = page_idx;
-    itr->page_off = page_off;
-    xn_ensure(xnpg_read(&itr->page, itr->buf));
-    return xn_ok();
-}
-
-xnresult_t xnlogitr_read_span(const struct xnlogitr *itr, uint8_t *buf, off_t off, size_t size) {
-    xnmm_init();
-    struct xnpg page = itr->page;
-    uint8_t *page_buf;
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&page_buf));
-    xnmm_defer(page_buf);
-
-    int page_off = itr->page_off + off;
-    if (page_off >= XNPG_SZ) {
-        page_off -= XNPG_SZ;
-        page.idx++;
-    }
-
-    xn_ensure(xnpg_read(&page, page_buf));
-
-    size_t nread = 0;
-    while (nread < size) {
-        size_t to_read = size - nread;
-        size_t remaining = XNPG_SZ - page_off;
-        size_t s = to_read < remaining ? to_read : remaining;
-        memcpy(buf + nread, page_buf + page_off, s);
-
-        nread += s;
-        page_off += s;
-
-        if (page_off == XNPG_SZ) {
-            page_off = 0;
-            page.idx++;
-            xn_ensure(xnpg_read(&page, page_buf));
-        }
-    }
-
-    return xn_ok();
-}
-
-xnresult_t xnlogitr_read_data(struct xnlogitr *itr, uint8_t *buf, size_t size) {
-    xnmm_init();
-    const off_t header_size = sizeof(int) + sizeof(enum xnlogt) + sizeof(size_t);
-    xn_ensure(xnlogitr_read_span(itr, buf, header_size, size));
-
-    return xn_ok();
-}
-
-xnresult_t xnlogitr_read_header(const struct xnlogitr *itr, int *tx_id, enum xnlogt *type, size_t *data_size) {
-    xnmm_init();
-    const size_t header_size = sizeof(int) + sizeof(enum xnlogt) + sizeof(size_t);
-    uint8_t hdr_buf[header_size];
-
-    xn_ensure(xnlogitr_read_span(itr, hdr_buf, 0, header_size));
-
-    *tx_id = *((int*)hdr_buf);
-    *type = *((enum xnlogt*)(hdr_buf + sizeof(int)));
-    *data_size = *((size_t*)(hdr_buf + sizeof(int) + sizeof(enum xnlogt)));
-
-    return xn_ok();
-}
-
-size_t xnlog_record_size(size_t data_size);
-
-xnresult_t xnlogitr_next(struct xnlogitr *itr, bool* valid) {
-    xnmm_init();
-    if (itr->page_off == -1) {
-        itr->page_off = 0;
-    } else {
-        int tx_id;
-        enum xnlogt type;
-        size_t data_size;
-        xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
-
-        itr->page_off += xnlog_record_size(data_size);
-        while (itr->page_off >= XNPG_SZ) {
-            itr->page_off -= XNPG_SZ;
-            itr->page.idx++;
-        }
-        xn_ensure(xnpg_read(&itr->page, itr->buf));
-    }
-
-    int tx_id;
-    enum xnlogt type;
-    size_t data_size;
-    xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
-    *valid = tx_id != 0;
-    return xn_ok();
-}
-
-xnresult_t xnlogitr_free(struct xnlogitr *itr) {
-    xnmm_init();
-    free(itr->buf);
-    free(itr);
-    return xn_ok();
-}
 
 
-xnresult_t xnlog_create(const char *log_path, struct xnlog **out_log) {
-    xnmm_init();
-    struct xnlog *log;
-    xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
-
-    xn_ensure(xnfile_create("log", true, &log->page.file_handle));
-    xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
-
-    //make iterator here to get last record offset
-    struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(log, &itr));
-    bool valid = true;
-    while (valid)
-        xn_ensure(xnlogitr_next(itr, &valid));
-    log->page.idx = itr->page.idx;
-    log->page_off = itr->page_off;
-    xn_ensure(xnlogitr_free(itr));
-
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&log->buf));
-    xn_ensure(xnpg_read(&log->page, log->buf));
-    
-    log->highest_tx_flushed = -1;
-
-    *out_log = log;
-    return xn_ok();
-}
-
-xnresult_t xnlog_flush(struct xnlog *log) {
-    xnmm_init();
-    xn_ensure(xnpg_write(&log->page, log->buf));
-    //don't need to call xnfile_sync since log files are opend with O_DATASYNC flag
-    return xn_ok();
-}
-
-xnresult_t xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
-    xnmm_init();
-    printf("log offset: %d\n", log->page_off);
-    size_t written = 0;
-    while (written < size) {
-        size_t to_write = size - written;
-        size_t remaining = XNPG_SZ - log->page_off;
-        size_t s = remaining < to_write ? remaining : to_write;
-        memcpy(log->buf + log->page_off, log_record + written, s);
-
-        log->page_off += s;
-        written += s;
-
-        //log buffer full
-        if (log->page_off == XNPG_SZ) {
-            xn_ensure(xnlog_flush(log));
-            log->page.idx++;
-            log->page_off = 0;
-        }
-    }
-
-    return xn_ok();
-}
-
-size_t xnlog_record_size(size_t data_size) {
-    size_t size = sizeof(int);      //tx id
-    size += sizeof(enum xnlogt);    //log type
-    size += sizeof(size_t);         //data size 
-    size += data_size;              //data
-    size += sizeof(uint32_t);       //checksum
-    return size;
-}
-
-xnresult_t xnlog_serialize_record(int tx_id, 
-                                  enum xnlogt type, 
-                                  size_t data_size, 
-                                  uint8_t *data, 
-                                  uint8_t *buf) {
-    xnmm_init();
-    off_t off = 0;
-    memcpy(buf + off, &tx_id, sizeof(int));
-    off += sizeof(int);
-    memcpy(buf + off, &type, sizeof(enum xnlogt));
-    off += sizeof(enum xnlogt);
-    memcpy(buf + off, &data_size, sizeof(size_t));
-    off += sizeof(size_t);
-    memcpy(buf + off, data, data_size);
-    off += data_size;
-    uint32_t checksum = xn_hash(buf, off);
-    memcpy(buf + off, &checksum, sizeof(uint32_t));
-    off += sizeof(uint32_t);
-
-    return xn_ok();
-}
 
 
 xnresult_t xndb_recover(struct xndb *db);
@@ -481,7 +249,7 @@ xnresult_t xntx_flush_writes(struct xntx *tx) {
         while (cur) {
             page.idx = cur->pg_idx;
             //TODO should this use mmap and mprotect???
-            xn_ensure(xnpg_write(&page, cur->val));
+            xn_ensure(xnpg_flush(&page, cur->val));
             cur = cur->next;
         }
     }
@@ -557,7 +325,7 @@ xnresult_t xntx_rollback(struct xntx *tx) {
     return xn_ok();
 }
 
-xnresult_t xntx_write(struct xntx *tx, struct xnpg *page, const uint8_t *buf, int offset, size_t size, bool log) {
+xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, int offset, size_t size, bool log) {
     xnmm_init();
     assert(tx->mode == XNTXMODE_WR);
 
@@ -565,7 +333,7 @@ xnresult_t xntx_write(struct xntx *tx, struct xnpg *page, const uint8_t *buf, in
 
     if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
         xn_ensure(xn_malloc(XNPG_SZ, (void**)&cpy));
-        xn_ensure(xnpg_read(page, cpy));
+        xn_ensure(xnpg_copy(page, cpy));
         xn_ensure(xntbl_insert(tx->mod_pgs, page, cpy));
     }
 
@@ -591,29 +359,7 @@ xnresult_t xntx_write(struct xntx *tx, struct xnpg *page, const uint8_t *buf, in
     return xn_ok();
 }
 
-xnresult_t xntx_read_ptr(struct xntx *tx, struct xnpg *page, uint8_t **out_ptr) {
-    xnmm_init();
-    if (tx->mode == XNTXMODE_WR || tx->mod_pgs) {
-        uint8_t *cpy;
-
-        if ((cpy = xntbl_find(tx->mod_pgs, page))) {
-            *out_ptr = cpy;
-            return xn_ok();
-        }
-    }
-
-    uint8_t *ptr;
-    if (!(ptr = xntbl_find(tx->db->pg_tbl, page))) {
-        xn_ensure(xnpg_mmap(page, &ptr));
-        xn_ensure(xntbl_insert(tx->db->pg_tbl, page, ptr));
-    }
-
-    *out_ptr = ptr;
-
-    return xn_ok();
-}
-
-xnresult_t xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offset, size_t size) {
+xnresult_t xnpg_read(struct xnpg *page, struct xntx *tx, uint8_t *buf, int offset, size_t size) {
     xnmm_init();
     if (tx->mode == XNTXMODE_WR || tx->mod_pgs) {
         uint8_t *cpy;
@@ -635,13 +381,13 @@ xnresult_t xntx_read(struct xntx *tx, struct xnpg *page, uint8_t *buf, int offse
     return xn_ok();
 }
 
-xnresult_t xntx_find_free_page(struct xntx *tx, struct xnpg *meta_page, struct xnpg *new_page) {
+xnresult_t xnpgr_find_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *new_page) {
     xnmm_init();
     int page_count = tx->db->file_handle->size / XNPG_SZ;
     int i, j;
     for (i = 0; i < page_count; i++) {
         uint8_t byte;
-        xn_ensure(xntx_read(tx, meta_page, &byte, i * sizeof(uint8_t), sizeof(uint8_t)));
+        xn_ensure(xnpg_read(meta_page, tx, &byte, i * sizeof(uint8_t), sizeof(uint8_t)));
         for (j = 0; j < 8; j++) {
             uint8_t mask = 1 << j;
             uint8_t bit = (mask & byte) >> j;
@@ -664,24 +410,21 @@ int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
     return page_idx / 8;
 }
 
-xnresult_t xntx_free_page(struct xntx *tx, struct xnpg page) {
+xnresult_t xnpgr_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg page) {
     xnmm_init();
-    struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
 
     //set bit to 'free'
     uint8_t byte;
-    xn_ensure(xntx_read(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t)));
+    xn_ensure(xnpg_read(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t)));
     byte &= ~(1 << (page.idx % 8));
-    xn_ensure(xntx_write(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t), true));
+    xn_ensure(xnpg_write(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t), true));
     return xn_ok();
 }
 
-xnresult_t xntx_allocate_page(struct xntx *tx, struct xnpg *page) {
+xnresult_t xnpgr_allocate_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *page) {
     xnmm_init();
 
-    struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
-
-    xn_ensure(xntx_find_free_page(tx, &meta_page, page));
+    xn_ensure(xnpgr_find_free_page(meta_page, tx, page));
 
     //zero out new page data
     uint8_t *buf;
@@ -689,21 +432,21 @@ xnresult_t xntx_allocate_page(struct xntx *tx, struct xnpg *page) {
     xnmm_defer(buf);
 
     memset(buf, 0, XNPG_SZ);
-    xn_ensure(xntx_write(tx, page, buf, 0, XNPG_SZ, true));
+    xn_ensure(xnpg_write(page, tx, buf, 0, XNPG_SZ, true));
 
     //set bit to 'used'
     uint8_t byte;
-    xn_ensure(xntx_read(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
+    xn_ensure(xnpg_read(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
     byte |= 1 << (page->idx % 8);
-    xn_ensure(xntx_write(tx, &meta_page, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t), true));
+    xn_ensure(xnpg_write(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t), true));
 
     return xn_ok();
 }
 
-xnresult_t xnlog_redo(struct xnlog *log, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id) {
+xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id) {
     xnmm_init();
     struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(log, &itr));
+    xn_ensure(xnlogitr_create(db->log, &itr));
     xn_ensure(xnlogitr_seek(itr, page_idx, page_off));
     bool valid = true;
     while (true) {
@@ -728,7 +471,7 @@ xnresult_t xnlog_redo(struct xnlog *log, struct xntx *tx, uint64_t page_idx, int
             int off = *((int*)(buf + sizeof(uint64_t)));
             size_t size = data_size - data_hdr_size;
             printf("redoing tx: %d, size: %ld, page idx: %ld, page off: %d\n", tx_id, size, page.idx, off);
-            xn_ensure(xntx_write(tx, &page, buf + data_hdr_size, off, size, false));
+            xn_ensure(xnpg_write(&page, tx, buf + data_hdr_size, off, size, false));
         }
     }
     xn_ensure(xnlogitr_free(itr));
@@ -761,7 +504,7 @@ xnresult_t xndb_recover(struct xndb *db) {
             start_txid = tx_id;
         } else if (type == XNLOGT_COMMIT && start_txid == tx_id) {
             printf("redoing tx: %d\n", tx_id);
-            xn_ensure(xnlog_redo(db->log, tx, start_pageidx, start_pageoff, start_txid));
+            xn_ensure(xndb_redo(db, tx, start_pageidx, start_pageoff, start_txid));
         }
     }
 
@@ -788,7 +531,9 @@ void *fcn(void *arg) {
         if (!xntx_create(db, XNTXMODE_WR, &tx))
             printf("failed\n");
         struct xnpg page;
-        if (!xntx_allocate_page(tx, &page))
+
+        struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
+        if (!xnpgr_allocate_page(&meta_page, tx, &page))
             printf("failed\n");
         if (!xntx_commit(tx))
             printf("failed\n");
@@ -799,7 +544,7 @@ void *fcn(void *arg) {
         struct xnpg page = { .file_handle = tx->db->file_handle, .idx = 0 };
 
         uint8_t *buf = malloc(XNPG_SZ);
-        if (!xntx_read(tx, &page, buf, 0, XNPG_SZ))
+        if (!xnpg_read(&page, tx, buf, 0, XNPG_SZ))
             printf("failed\n");
         printf("pages: %d\n", *buf);
         free(buf);
@@ -837,15 +582,16 @@ int main(int argc, char** argv) {
             exit(1);
         }
         struct xnpg page;
-        if (!xntx_allocate_page(tx, &page)) {
+        struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = XNPGID_METADATA};
+        if (!xnpgr_allocate_page(&meta_page, tx, &page)) {
             printf("xntx_allocate_page failed\n");
             exit(1);
         }
-        if (!xntx_free_page(tx, page)) {
+        if (!xnpgr_free_page(&meta_page, tx, page)) {
             printf("xntx_free_page failed\n");
             exit(1);
         }
-        if (!xntx_allocate_page(tx, &page)) {
+        if (!xnpgr_allocate_page(&meta_page, tx, &page)) {
             printf("xntx_allocate_page failed\n");
             exit(1);
         }
