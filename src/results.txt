@@ -1,0 +1,43 @@
+gcc -std=c11 main.c file.c util.c log.c page.c -o main -pthread -g
+In file included from file.h:2,
+                 from page.h:3,
+                 from page.c:1:
+util.h:30:49: error: unknown type name ‘mode_t’
+   30 | xnresult_t xn_open(const char *path, int flags, mode_t mode, int *out_fd);
+      |                                                 ^~~~~~
+In file included from page.h:3,
+                 from page.c:1:
+file.h:14:65: error: unknown type name ‘off_t’
+   14 | xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size);
+      |                                                                 ^~~~~
+file.h:15:58: error: unknown type name ‘off_t’
+   15 | xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size);
+      |                                                          ^~~~~
+file.h:16:56: error: unknown type name ‘off_t’
+   16 | xnresult_t xnfile_mmap(void *addr, size_t len, int fd, off_t offset, void **out_ptr);
+      |                                                        ^~~~~
+In file included from file.h:2,
+                 from page.h:3,
+                 from page.c:1:
+page.c: In function ‘xnpg_write’:
+page.c:7:15: warning: implicit declaration of function ‘xnfile_write’; did you mean ‘xnfile_create’? [-Wimplicit-function-declaration]
+    7 |     xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
+      |               ^~~~~~~~~~~~
+util.h:18:28: note: in definition of macro ‘xn_ensure’
+   18 | #define xn_ensure(b) if (!(b)) { \
+      |                            ^
+page.c: In function ‘xnpg_read’:
+page.c:13:15: warning: implicit declaration of function ‘xnfile_read’; did you mean ‘xnfile_create’? [-Wimplicit-function-declaration]
+   13 |     xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
+      |               ^~~~~~~~~~~
+util.h:18:28: note: in definition of macro ‘xn_ensure’
+   18 | #define xn_ensure(b) if (!(b)) { \
+      |                            ^
+page.c: In function ‘xnpg_mmap’:
+page.c:19:15: warning: implicit declaration of function ‘xnfile_mmap’; did you mean ‘xnfile_munmap’? [-Wimplicit-function-declaration]
+   19 |     xn_ensure(xnfile_mmap(0, XNPG_SZ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
+      |               ^~~~~~~~~~~
+util.h:18:28: note: in definition of macro ‘xn_ensure’
+   18 | #define xn_ensure(b) if (!(b)) { \
+      |                            ^
+make: *** [Makefile:3: main] Error 1

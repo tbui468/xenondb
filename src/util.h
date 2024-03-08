@@ -1,13 +1,10 @@
 #pragma once
 
 #include <pthread.h>
-#include <stdbool.h>
-#include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
+#include <stdbool.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+#include <sys/types.h>
 
 #define xnresult_t __attribute__((warn_unused_result)) bool
 
@@ -38,6 +35,6 @@ xnresult_t xn_cond_signal(pthread_cond_t *cv);
 xnresult_t xn_cond_wait(pthread_cond_t *cv, pthread_mutex_t *lock);
 xnresult_t xn_mutex_init(pthread_mutex_t *lock);
 xnresult_t xn_mutex_destroy(pthread_mutex_t *lock);
-
-
-
+xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock);
+xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv);
+xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock);

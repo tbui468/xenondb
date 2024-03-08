@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
-#include "common.h"
-#include <string.h>
-#include <sys/stat.h>
+#include "util.h"
+
 #include <stdlib.h>
+#include <fcntl.h>
 
 static int _all_ptr_count_ = 0;
 static int _defer_ptr_count_ = 0;
@@ -107,5 +107,31 @@ xnresult_t xn_mutex_init(pthread_mutex_t *lock) {
 xnresult_t xn_mutex_destroy(pthread_mutex_t *lock) {
     xnmm_init();
     xn_ensure(pthread_mutex_destroy(lock) == 0);
+    return xn_ok();
+}
+
+xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock) {
+    xnmm_init();
+    xn_ensure(xn_mutex_lock(lock));
+    (*i)++;
+    xn_ensure(xn_mutex_unlock(lock));
+    return xn_ok();
+}
+
+xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv) {
+    xnmm_init();
+    xn_ensure(xn_mutex_lock(lock));
+    (*i)--;
+    if (*i == 0)
+        xn_ensure(xn_cond_signal(cv));
+    xn_ensure(xn_mutex_unlock(lock));
+    return xn_ok();
+}
+
+xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
+    xnmm_init();
+    xn_ensure(xn_mutex_lock(lock));
+    (*i)--;
+    xn_ensure(xn_mutex_unlock(lock));
     return xn_ok();
 }

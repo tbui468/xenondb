@@ -1,8 +1,5 @@
 #pragma once
-#include "common.h"
-
-#include <limits.h>
-#include <sys/mman.h>
+#include "util.h"
 
 struct xnfile {
     int fd;
@@ -10,11 +7,12 @@ struct xnfile {
     size_t size;
 };
 
-__attribute__((warn_unused_result)) bool xnfile_create(const char *name, bool direct, struct xnfile **handle);
-__attribute__((warn_unused_result)) bool xnfile_close(struct xnfile *handle);
-__attribute__((warn_unused_result)) bool xnfile_set_size(struct xnfile *handle, size_t size);
-__attribute__((warn_unused_result)) bool xnfile_sync(struct xnfile *handle);
-__attribute__((warn_unused_result)) bool xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size);
-__attribute__((warn_unused_result)) bool xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size);
-__attribute__((warn_unused_result)) bool xnfile_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset, void **out_ptr);
-__attribute__((warn_unused_result)) bool xnfile_munmap(void *addr, size_t len);
+xnresult_t xnfile_create(const char *name, bool direct, struct xnfile **handle);
+xnresult_t xnfile_close(struct xnfile *handle);
+xnresult_t xnfile_set_size(struct xnfile *handle, size_t size);
+xnresult_t xnfile_sync(struct xnfile *handle);
+xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size);
+xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size);
+//TODO these two functions can just be integrated into page.h and page.c
+xnresult_t xnfile_mmap(void *addr, size_t len, int fd, off_t offset, void **out_ptr);
+xnresult_t xnfile_munmap(void *addr, size_t len);

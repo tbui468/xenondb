@@ -1,77 +1,24 @@
 #define _GNU_SOURCE
 
+#include "file.h"
+#include "util.h"
+#include "log.h"
+#include "page.h"
+
 //TODO these headers should be moved
 #define XNPGID_METADATA 0
 #define XNTBL_MAX_BUCKETS 128
-#define XNPG_SZ 4096
 #define XNLOG_BUF_SZ XNPG_SZ
 #include <stdlib.h> //free
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <string.h>
 #include <sys/mman.h>
-
-#include "common.h"
-#include "file.h"
 
 pthread_cond_t disk_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 pthread_cond_t mem_rdtxs_cv = PTHREAD_COND_INITIALIZER;
-
-struct xnpg {
-    struct xnfile *file_handle;
-    uint64_t idx;
-};
-
-xnresult_t xnpg_write(struct xnpg *page, const uint8_t *buf) {
-    xnmm_init();
-    xn_ensure(xnfile_write(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ)); 
-    return xn_ok();
-}
-
-xnresult_t xnpg_read(struct xnpg *page, uint8_t *buf) {
-    xnmm_init();
-    xn_ensure(xnfile_read(page->file_handle, buf, page->idx * XNPG_SZ, XNPG_SZ));
-    return xn_ok();
-}
-
-xnresult_t xnpg_mmap(struct xnpg *page, uint8_t **ptr) {
-    xnmm_init();
-    xn_ensure(xnfile_mmap(0, XNPG_SZ, MAP_SHARED, PROT_READ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
-    return xn_ok();
-}
-
-xnresult_t xnpg_munmap(uint8_t *ptr) {
-    xnmm_init();
-    xn_ensure(xnfile_munmap((void*)ptr, XNPG_SZ));
-    return xn_ok();
-}
-
-xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock) {
-    xnmm_init();
-    xn_ensure(xn_mutex_lock(lock));
-    (*i)++;
-    xn_ensure(xn_mutex_unlock(lock));
-    return xn_ok();
-}
-
-xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv) {
-    xnmm_init();
-    xn_ensure(xn_mutex_lock(lock));
-    (*i)--;
-    if (*i == 0)
-        xn_ensure(xn_cond_signal(cv));
-    xn_ensure(xn_mutex_unlock(lock));
-    return xn_ok();
-}
-
-xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
-    xnmm_init();
-    xn_ensure(xn_mutex_lock(lock));
-    (*i)--;
-    xn_ensure(xn_mutex_unlock(lock));
-    return xn_ok();
-}
 
 struct xnentry {
     uint64_t pg_idx;

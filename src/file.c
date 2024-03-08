@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/mman.h>
+
 
 static xnresult_t xnfile_sync_parent(const char* child_path) {
     xnmm_init();
@@ -117,10 +122,10 @@ xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size)
     return xn_ok();
 }
 
-xnresult_t xnfile_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset, void **out_ptr) {
+xnresult_t xnfile_mmap(void *addr, size_t len, int fd, off_t offset, void **out_ptr) {
     xnmm_init();
     void *ptr;
-    xn_ensure((ptr = mmap(addr, len, prot, flags, fd, offset)) != MAP_FAILED);
+    xn_ensure((ptr = mmap(addr, len, MAP_SHARED, PROT_READ, fd, offset)) != MAP_FAILED);
     *out_ptr = ptr;
     return xn_ok();
 }
