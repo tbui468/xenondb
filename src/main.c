@@ -49,27 +49,27 @@ xnresult_t xnpg_munmap(uint8_t *ptr) {
 
 xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock) {
     xnmm_init();
-    xn_ensure(pthread_mutex_lock(lock) == 0);
+    xn_ensure(xn_mutex_lock(lock));
     (*i)++;
-    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    xn_ensure(xn_mutex_unlock(lock));
     return xn_ok();
 }
 
 xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv) {
     xnmm_init();
-    xn_ensure(pthread_mutex_lock(lock) == 0);
+    xn_ensure(xn_mutex_lock(lock));
     (*i)--;
     if (*i == 0)
-        xn_ensure(pthread_cond_signal(cv) == 0);
-    xn_ensure(pthread_mutex_unlock(lock) == 0);
+        xn_ensure(xn_cond_signal(cv));
+    xn_ensure(xn_mutex_unlock(lock));
     return xn_ok();
 }
 
 xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock) {
     xnmm_init();
-    xn_ensure(pthread_mutex_lock(lock) == 0);
+    xn_ensure(xn_mutex_lock(lock));
     (*i)--;
-    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    xn_ensure(xn_mutex_unlock(lock));
     return xn_ok();
 }
 
@@ -290,7 +290,8 @@ xnresult_t xnlogitr_read_header(const struct xnlogitr *itr, int *tx_id, enum xnl
 
 size_t xnlog_record_size(size_t data_size);
 
-bool xnlogitr_next(struct xnlogitr *itr) {
+xnresult_t xnlogitr_next(struct xnlogitr *itr, bool* valid) {
+    xnmm_init();
     if (itr->page_off == -1) {
         itr->page_off = 0;
     } else {
@@ -311,7 +312,8 @@ bool xnlogitr_next(struct xnlogitr *itr) {
     enum xnlogt type;
     size_t data_size;
     xn_ensure(xnlogitr_read_header(itr, &tx_id, &type, &data_size));
-    return tx_id != 0; //tx_id of 0 means no more log records left
+    *valid = tx_id != 0;
+    return xn_ok();
 }
 
 xnresult_t xnlogitr_free(struct xnlogitr *itr) {
@@ -333,8 +335,9 @@ xnresult_t xnlog_create(const char *log_path, struct xnlog **out_log) {
     //make iterator here to get last record offset
     struct xnlogitr *itr;
     xn_ensure(xnlogitr_create(log, &itr));
-    while (xnlogitr_next(itr))
-        ;
+    bool valid = true;
+    while (valid)
+        xn_ensure(xnlogitr_next(itr, &valid));
     log->page.idx = itr->page.idx;
     log->page_off = itr->page_off;
     xn_ensure(xnlogitr_free(itr));
@@ -389,10 +392,10 @@ size_t xnlog_record_size(size_t data_size) {
 }
 
 xnresult_t xnlog_serialize_record(int tx_id, 
-                                                                enum xnlogt type, 
-                                                                size_t data_size, 
-                                                                uint8_t *data, 
-                                                                uint8_t *buf) {
+                                  enum xnlogt type, 
+                                  size_t data_size, 
+                                  uint8_t *data, 
+                                  uint8_t *buf) {
     xnmm_init();
     off_t off = 0;
     memcpy(buf + off, &tx_id, sizeof(int));
@@ -417,9 +420,9 @@ xnresult_t xndb_create(const char *dir_path, struct xndb **out_db) {
     xnmm_init();
     struct xndb *db;
     xn_ensure(xn_malloc(sizeof(struct xndb), (void**)&db));
-    xn_ensure(pthread_mutex_init(&db->wrtx_lock, NULL) == 0);
-    xn_ensure(pthread_mutex_init(&db->rdtx_count_lock, NULL) == 0);
-    xn_ensure(pthread_mutex_init(&db->committed_wrtx_lock, NULL) == 0);
+    xn_ensure(xn_mutex_init(&db->wrtx_lock));
+    xn_ensure(xn_mutex_init(&db->rdtx_count_lock));
+    xn_ensure(xn_mutex_init(&db->committed_wrtx_lock));
 
     xn_ensure(xnlog_create("log", &db->log));
 
@@ -437,21 +440,21 @@ xnresult_t xndb_create(const char *dir_path, struct xndb **out_db) {
     db->committed_wrtx = NULL;
     db->rdtx_count = 0;
 
-    xn_ensure(pthread_mutex_init(&db->tx_id_counter_lock, NULL) == 0);
+    xn_ensure(xn_mutex_init(&db->tx_id_counter_lock));
     db->tx_id_counter = 1;
 
     xn_ensure(xndb_recover(db));
 
-    *out_db = db;
+   *out_db = db;
     return xn_ok();
 }
 
 xnresult_t xndb_free(struct xndb *db) {
     xnmm_init();
-    xn_ensure(pthread_mutex_destroy(&db->wrtx_lock) == 0);
-    xn_ensure(pthread_mutex_destroy(&db->rdtx_count_lock) == 0);
-    xn_ensure(pthread_mutex_destroy(&db->committed_wrtx_lock) == 0);
-    xn_ensure(pthread_mutex_destroy(&db->tx_id_counter_lock) == 0);
+    xn_ensure(xn_mutex_destroy(&db->wrtx_lock));
+    xn_ensure(xn_mutex_destroy(&db->rdtx_count_lock));
+    xn_ensure(xn_mutex_destroy(&db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_destroy(&db->tx_id_counter_lock));
     xn_ensure(xnfile_close(db->file_handle));
     xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
@@ -476,15 +479,15 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
     struct xntx *tx;
     xn_ensure(xn_malloc(sizeof(struct xntx), (void**)&tx));
 
-    xn_ensure(pthread_mutex_lock(&db->tx_id_counter_lock) == 0);
+    xn_ensure(xn_mutex_lock(&db->tx_id_counter_lock));
     tx->id = db->tx_id_counter++;
-    xn_ensure(pthread_mutex_unlock(&db->tx_id_counter_lock) == 0);
+    xn_ensure(xn_mutex_unlock(&db->tx_id_counter_lock));
 
     tx->db = db;
     tx->rdtx_count = 0;
-    xn_ensure(pthread_mutex_init(&tx->rdtx_count_lock, NULL) == 0);
+    xn_ensure(xn_mutex_init(&tx->rdtx_count_lock));
     if (mode == XNTXMODE_WR) {
-        xn_ensure(pthread_mutex_lock(&db->wrtx_lock) == 0);
+        xn_ensure(xn_mutex_lock(&db->wrtx_lock));
         xn_ensure(xntbl_create(&tx->mod_pgs));
 
         size_t rec_size = xnlog_record_size(0);
@@ -495,7 +498,7 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, rec));
         xn_ensure(xnlog_append(db->log, rec, rec_size));
     } else {
-        xn_ensure(pthread_mutex_lock(&db->committed_wrtx_lock));
+        xn_ensure(xn_mutex_lock(&db->committed_wrtx_lock));
         if (db->committed_wrtx) {
             tx->mod_pgs = db->committed_wrtx->mod_pgs;
             xn_ensure(xn_atomic_increment(&tx->rdtx_count, &tx->rdtx_count_lock));
@@ -503,7 +506,7 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
             tx->mod_pgs = NULL;
             xn_ensure(xn_atomic_increment(&db->rdtx_count, &db->rdtx_count_lock));
         }
-        xn_ensure(pthread_mutex_unlock(&db->committed_wrtx_lock));
+        xn_ensure(xn_mutex_unlock(&db->committed_wrtx_lock));
     }
     tx->mode = mode;
     *out_tx = tx;
@@ -512,11 +515,11 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
 
 xnresult_t xn_wait_until_zero(int *count, pthread_mutex_t *lock, pthread_cond_t *cv) {
     xnmm_init();
-    xn_ensure(pthread_mutex_lock(lock) == 0);
+    xn_ensure(xn_mutex_lock(lock));
     while (*count > 0) {
-        xn_ensure(pthread_cond_wait(cv, lock) == 0);
+        xn_ensure(xn_cond_wait(cv, lock));
     }
-    xn_ensure(pthread_mutex_unlock(lock) == 0);
+    xn_ensure(xn_mutex_unlock(lock));
 
     return xn_ok();
 }
@@ -553,9 +556,9 @@ xnresult_t xntx_free(struct xntx *tx) {
     }
 
     //XNTXMODE_WR
-    xn_ensure(pthread_mutex_unlock(&tx->db->wrtx_lock) == 0);
+    xn_ensure(xn_mutex_unlock(&tx->db->wrtx_lock));
     xn_ensure(xntbl_free(tx->mod_pgs, false));
-    xn_ensure(pthread_mutex_destroy(&tx->rdtx_count_lock) == 0);
+    xn_ensure(xn_mutex_destroy(&tx->rdtx_count_lock));
     free(tx);
     return xn_ok();
 }
@@ -564,7 +567,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xnmm_init();
     assert(tx->mode == XNTXMODE_WR);
 
-    xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_lock(&tx->db->committed_wrtx_lock));
 
     size_t rec_size = xnlog_record_size(0);
     uint8_t *rec;
@@ -575,7 +578,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
     tx->db->committed_wrtx = tx;
 
-    xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_unlock(&tx->db->committed_wrtx_lock));
 
     //TODO remaining code should run asynchronously (eg, no more readers in next tbl)
   
@@ -584,9 +587,9 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xn_ensure(xnlog_flush(tx->db->log));
     xn_ensure(xntx_flush_writes(tx));
 
-    xn_ensure(pthread_mutex_lock(&tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_lock(&tx->db->committed_wrtx_lock));
     tx->db->committed_wrtx = NULL;
-    xn_ensure(pthread_mutex_unlock(&tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_unlock(&tx->db->committed_wrtx_lock));
 
     //TODO page table should be freed when no more readers and writer txs are reading from this page table
 
@@ -700,6 +703,8 @@ xnresult_t xntx_find_free_page(struct xntx *tx, struct xnpg *meta_page, struct x
                 goto found_free_bit;
         }
     }
+
+    //TODO should this be xn_ensure(false)?
     return false;
 
 found_free_bit:
@@ -753,7 +758,11 @@ xnresult_t xnlog_redo(struct xnlog *log, struct xntx *tx, uint64_t page_idx, int
     struct xnlogitr *itr;
     xn_ensure(xnlogitr_create(log, &itr));
     xn_ensure(xnlogitr_seek(itr, page_idx, page_off));
-    while (xnlogitr_next(itr)) {
+    bool valid = true;
+    while (true) {
+        xn_ensure(xnlogitr_next(itr, &valid));
+        if (!valid) break;
+
         int cur_tx_id;
         enum xnlogt type;
         size_t data_size;
@@ -790,7 +799,10 @@ xnresult_t xndb_recover(struct xndb *db) {
     int start_pageoff;
     int start_txid = 0;
 
-    while (xnlogitr_next(itr)) {
+    bool valid;
+    while (true) {
+        xn_ensure(xnlogitr_next(itr, &valid));
+        if (!valid) break;
         int tx_id;
         enum xnlogt type;
         size_t data_size;
@@ -851,9 +863,10 @@ void *fcn(void *arg) {
 
 int main(int argc, char** argv) {
     struct xndb *db;
-    if (!xndb_create("students", &db))
-        printf("failed\n");
-
+    if (!xndb_create("students", &db)) {
+        printf("xndb_create failed\n");
+        exit(1);
+    }
     /*
     //multi-threaded test
     const int THREAD_COUNT = 24;
@@ -872,17 +885,27 @@ int main(int argc, char** argv) {
     //single threaded test
     {
         struct xntx *tx;
-        if (!xntx_create(db, XNTXMODE_WR, &tx))
-            printf("failed\n");
+        if (!xntx_create(db, XNTXMODE_WR, &tx)) {
+            printf("xntx_create failed\n");
+            exit(1);
+        }
         struct xnpg page;
-        if (!xntx_allocate_page(tx, &page))
-            printf("failed\n");
-        if (!xntx_free_page(tx, page))
-            printf("failed\n");
-        if (!xntx_allocate_page(tx, &page))
-            printf("failed\n");
-        if (!xntx_commit(tx))
-            printf("failed\n");
+        if (!xntx_allocate_page(tx, &page)) {
+            printf("xntx_allocate_page failed\n");
+            exit(1);
+        }
+        if (!xntx_free_page(tx, page)) {
+            printf("xntx_free_page failed\n");
+            exit(1);
+        }
+        if (!xntx_allocate_page(tx, &page)) {
+            printf("xntx_allocate_page failed\n");
+            exit(1);
+        }
+        if (!xntx_commit(tx)) {
+            printf("xntx_commit failed\n");
+            exit(1);
+        }
     }
 
     /*
@@ -897,7 +920,9 @@ int main(int argc, char** argv) {
             printf("failed\n");
     }*/
 
-    if (!xndb_free(db))
-        printf("failed\n");
+    if (!xndb_free(db)) {
+        printf("xndb_free failed\n");
+        exit(1);
+    }
     return 0;
 }

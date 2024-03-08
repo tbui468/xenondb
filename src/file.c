@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <sys/stat.h>
 
 static xnresult_t xnfile_sync_parent(const char* child_path) {
     xnmm_init();
@@ -23,17 +21,11 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
     return xn_ok();
 }
 
+
 xnresult_t xnfile_create(const char *relpath, bool direct, struct xnfile **out_handle) {
     xnmm_init();
     struct xnfile *handle;
     xn_ensure(xn_malloc(sizeof(struct xnfile), (void**)&handle));
-
-    //TODO if an error occurs after this line, need to free handle - how can we do this in a readable way?
-
-    char buf[PATH_MAX];
-    xn_ensure(realpath(relpath, buf) != NULL);
-    xn_ensure(xn_malloc(strlen(buf) + 1, (void**)&handle->path));
-    strcpy(handle->path, buf);
 
     int flags = O_CREAT | O_RDWR;
     if (direct) {
@@ -41,10 +33,16 @@ xnresult_t xnfile_create(const char *relpath, bool direct, struct xnfile **out_h
         flags |= O_DSYNC;
     }
 
-    xn_ensure((handle->fd = open(handle->path, flags, S_IRUSR | S_IWUSR)) != -1);
+    //TODO if an error occurs after this line, need to free handle - how can we do this in a readable way?
+    xn_ensure(xn_open(relpath, flags, S_IRUSR | S_IWUSR, &handle->fd));
+
+    char buf[PATH_MAX];
+    xn_ensure(xn_realpath(relpath, buf));
+    xn_ensure(xn_malloc(strlen(buf) + 1, (void**)&handle->path));
+    strcpy(handle->path, buf);
 
     struct stat s;
-    xn_ensure(stat(handle->path, &s) == 0);
+    xn_ensure(xn_stat(handle->path, &s));
     handle->size = s.st_size;
 
     //need to sync parent directory to ensure new file remains on disk in case of failure
