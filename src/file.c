@@ -122,10 +122,10 @@ xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size)
     return xn_ok();
 }
 
-xnresult_t xnfile_mmap(void *addr, size_t len, int fd, off_t offset, void **out_ptr) {
+xnresult_t xnfile_mmap(struct xnfile *handle, off_t offset, size_t len, void **out_ptr) {
     xnmm_init();
     void *ptr;
-    xn_ensure((ptr = mmap(addr, len, MAP_SHARED, PROT_READ, fd, offset)) != MAP_FAILED);
+    xn_ensure((ptr = mmap(0, len, MAP_SHARED, PROT_READ, handle->fd, offset)) != MAP_FAILED);
     *out_ptr = ptr;
     return xn_ok();
 }

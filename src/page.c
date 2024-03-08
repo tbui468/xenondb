@@ -16,7 +16,7 @@ xnresult_t xnpg_read(struct xnpg *page, uint8_t *buf) {
 
 xnresult_t xnpg_mmap(struct xnpg *page, uint8_t **ptr) {
     xnmm_init();
-    xn_ensure(xnfile_mmap(0, XNPG_SZ, page->file_handle->fd, page->idx * XNPG_SZ, (void**)ptr));
+    xn_ensure(xnfile_mmap(page->file_handle, page->idx * XNPG_SZ, XNPG_SZ, (void**)ptr));
     return xn_ok();
 }
 
