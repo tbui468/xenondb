@@ -2,7 +2,6 @@
 
 #include "file.h"
 
-#include <assert.h>
 #include <libgen.h>
 #include <string.h>
 #include <stdlib.h>
@@ -49,6 +48,7 @@ xnresult_t xnfile_create(const char *relpath, bool direct, struct xnfile **out_h
     struct stat s;
     xn_ensure(xn_stat(handle->path, &s));
     handle->size = s.st_size;
+    handle->block_size = s.st_blksize;
 
     //need to sync parent directory to ensure new file remains on disk in case of failure
     if (handle->size == 0) {
@@ -82,7 +82,7 @@ xnresult_t xnfile_sync(struct xnfile *handle) {
 
 xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size) {
     xnmm_init();
-    assert(off + size <= handle->size);
+    xn_ensure(off + size <= handle->size);
     xn_ensure(lseek(handle->fd, off, SEEK_SET) != -1);
 
     size_t written = 0;
@@ -103,7 +103,7 @@ xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_
 
 xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size) {
     xnmm_init();
-    assert(off + size <= handle->size);
+    xn_ensure(off + size <= handle->size);
     xn_ensure(lseek(handle->fd, off, SEEK_SET) != -1);
 
     size_t red = 0;
@@ -124,8 +124,10 @@ xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size)
 
 xnresult_t xnfile_mmap(struct xnfile *handle, off_t offset, size_t len, void **out_ptr) {
     xnmm_init();
+    xn_ensure(offset % handle->block_size == 0);
+    xn_ensure(offset + len <= handle->size);
     void *ptr;
-    xn_ensure((ptr = mmap(0, len, MAP_SHARED, PROT_READ, handle->fd, offset)) != MAP_FAILED);
+    xn_ensure((ptr = mmap(NULL, len, MAP_SHARED, PROT_READ, handle->fd, offset)) != MAP_FAILED);
     *out_ptr = ptr;
     return xn_ok();
 }

@@ -5,6 +5,7 @@ struct xnfile {
     int fd;
     char *path;
     size_t size;
+    size_t block_size;
 };
 
 xnresult_t xnfile_create(const char *name, bool direct, struct xnfile **handle);

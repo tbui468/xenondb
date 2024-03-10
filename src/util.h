@@ -18,7 +18,7 @@ void xnmm_cleanup_deferred();
 #define xn_ok() ({ xnmm_cleanup_deferred(); true; })
 
 #define xn_ensure(b) if (!(b)) { \
-                         printf("%s\n", __func__); \
+                         fprintf(stderr, "%s\n", __func__); \
                          xnmm_cleanup_all(); \
                          return false; \
                      }
