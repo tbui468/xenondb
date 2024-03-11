@@ -3,6 +3,7 @@
 #include "util_test.h"
 #include "file_test.h"
 #include "page_test.h"
+#include "table_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -14,6 +15,7 @@ int main() {
     util_tests();
     file_tests();
     page_tests();
+    table_tests();
     
     int passed_count = 0;
     
