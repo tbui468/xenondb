@@ -67,7 +67,7 @@ xnresult_t xntx_flush_writes(struct xntx *tx) {
     return xn_ok();
 }
 
-xnresult_t xntx_free(struct xntx *tx) {
+static xnresult_t xntx_free(struct xntx *tx) {
     xnmm_init();
     if (tx->mode == XNTXMODE_RD) {
         if (tx->mod_pgs) {

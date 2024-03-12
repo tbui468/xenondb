@@ -91,7 +91,7 @@ xnresult_t xnpg_read(struct xnpg *page, struct xntx *tx, uint8_t *buf, int offse
     return xn_ok();
 }
 
-xnresult_t xnpgr_find_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *new_page) {
+static xnresult_t xnpgr_find_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *new_page) {
     xnmm_init();
     int page_count = tx->db->file_handle->size / XNPG_SZ;
     int i, j;
@@ -116,7 +116,7 @@ found_free_bit:
     return xn_ok();
 }
 
-int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
+static int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
     return page_idx / 8;
 }
 
