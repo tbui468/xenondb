@@ -26,12 +26,15 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
 }
 
 
-xnresult_t xnfile_create(const char *relpath, bool direct, struct xnfile **out_handle) {
+xnresult_t xnfile_create(const char *relpath, bool create, bool direct, struct xnfile **out_handle) {
     xnmm_init();
     struct xnfile *handle;
     xn_ensure(xn_malloc(sizeof(struct xnfile), (void**)&handle));
 
-    int flags = O_CREAT | O_RDWR;
+    int flags = O_RDWR;
+    if (create) {
+        flags |= O_CREAT;
+    }
     if (direct) {
         flags |= O_DIRECT;
         flags |= O_DSYNC;

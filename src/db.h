@@ -23,7 +23,6 @@ struct xndb {
 };
 
 
-xnresult_t xndb_create(const char *dir_path, struct xndb **out_db);
+xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
-xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id);
 xnresult_t xndb_recover(struct xndb *db);

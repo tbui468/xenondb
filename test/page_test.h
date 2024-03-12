@@ -6,7 +6,7 @@
 
 void page_copy() {
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, &handle));
+    assert(xnfile_create("dummy", true, false, &handle));
     assert(xnfile_set_size(handle, XNPG_SZ));
     assert(handle->size == XNPG_SZ);
 
@@ -35,7 +35,7 @@ void page_copy() {
 
 void page_flush() {
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, &handle));
+    assert(xnfile_create("dummy", true, false, &handle));
     assert(xnfile_set_size(handle, XNPG_SZ));
     assert(handle->size == XNPG_SZ);
 
@@ -71,7 +71,7 @@ void page_flush() {
 
 void page_mmap() {
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, &handle));
+    assert(xnfile_create("dummy", true, false, &handle));
     assert(xnfile_set_size(handle, XNPG_SZ));
     assert(handle->size == XNPG_SZ);
 

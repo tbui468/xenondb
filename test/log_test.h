@@ -5,7 +5,7 @@
 
 void log_create_free() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", &log));
+    assert(xnlog_create("dummy", true, &log));
     assert(xnlog_free(log));
 }
 
@@ -31,7 +31,7 @@ void log_make_update_record() {
 
 void log_append_record() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", &log));
+    assert(xnlog_create("dummy", true, &log));
 
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
@@ -52,7 +52,7 @@ void log_append_record() {
 
 void log_append_record_overflow() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", &log));
+    assert(xnlog_create("dummy", true, &log));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf;
@@ -74,7 +74,7 @@ void log_append_record_overflow() {
 
 void log_flush_buffer() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", &log));
+    assert(xnlog_create("dummy", true, &log));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf;

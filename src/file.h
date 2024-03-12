@@ -8,7 +8,7 @@ struct xnfile {
     size_t block_size;
 };
 
-xnresult_t xnfile_create(const char *name, bool direct, struct xnfile **handle);
+xnresult_t xnfile_create(const char *name, bool create, bool direct, struct xnfile **handle);
 xnresult_t xnfile_close(struct xnfile *handle);
 xnresult_t xnfile_set_size(struct xnfile *handle, size_t size);
 xnresult_t xnfile_sync(struct xnfile *handle);

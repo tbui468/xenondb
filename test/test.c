@@ -8,6 +8,7 @@
 #include "table_test.h"
 #include "log_test.h"
 #include "logitr_test.h"
+#include "db_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -22,11 +23,12 @@ int main() {
     table_tests();
     log_tests();
     logitr_tests();
+    db_tests();
     
     int passed_count = 0;
     
     for (int i = 0; i < fcn_count; i++) {
-        system("rm dummy");
+        system("rm dummy log");
 
         passed = true;
         fcns[i]();

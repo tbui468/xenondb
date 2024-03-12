@@ -3,12 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-xnresult_t xnlog_create(const char *log_path, struct xnlog **out_log) {
+xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_log) {
     xnmm_init();
     struct xnlog *log;
     xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
 
-    xn_ensure(xnfile_create(log_path, true, &log->page.file_handle));
+    xn_ensure(xnfile_create(log_path, create, true, &log->page.file_handle));
     xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
 
     //make iterator here to get last record offset

@@ -1,7 +1,7 @@
 main: test
 	./test
 
-test: libxenondb.a test.c test.h file_test.h util_test.h page_test.h table_test.h log_test.h logitr_test.h
+test: libxenondb.a test.c test.h file_test.h util_test.h page_test.h table_test.h log_test.h logitr_test.h db_test.h
 	gcc test.c -L. -lxenondb -I./../src -o test
 
 example: main.c libxenondb.a
