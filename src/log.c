@@ -8,7 +8,7 @@ xnresult_t xnlog_create(const char *log_path, struct xnlog **out_log) {
     struct xnlog *log;
     xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
 
-    xn_ensure(xnfile_create("log", true, &log->page.file_handle));
+    xn_ensure(xnfile_create(log_path, true, &log->page.file_handle));
     xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
 
     //make iterator here to get last record offset
@@ -30,6 +30,14 @@ xnresult_t xnlog_create(const char *log_path, struct xnlog **out_log) {
     return xn_ok();
 }
 
+
+xnresult_t xnlog_free(struct xnlog *log) {
+    xnmm_init();
+    free(log->buf);
+    free(log);
+    return xn_ok();
+}
+
 xnresult_t xnlog_flush(struct xnlog *log) {
     xnmm_init();
     xn_ensure(xnpg_flush(&log->page, log->buf));
@@ -39,7 +47,6 @@ xnresult_t xnlog_flush(struct xnlog *log) {
 
 xnresult_t xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size) {
     xnmm_init();
-    printf("log offset: %d\n", log->page_off);
     size_t written = 0;
     while (written < size) {
         size_t to_write = size - written;
@@ -50,7 +57,6 @@ xnresult_t xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t siz
         log->page_off += s;
         written += s;
 
-        //log buffer full
         if (log->page_off == XNPG_SZ) {
             xn_ensure(xnlog_flush(log));
             log->page.idx++;

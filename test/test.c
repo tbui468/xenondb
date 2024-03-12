@@ -1,9 +1,13 @@
 #include <stdio.h>
+#include <stdlib.h>
+
 #include "test.h"
 #include "util_test.h"
 #include "file_test.h"
 #include "page_test.h"
 #include "table_test.h"
+#include "log_test.h"
+#include "logitr_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -16,10 +20,14 @@ int main() {
     file_tests();
     page_tests();
     table_tests();
+    log_tests();
+    logitr_tests();
     
     int passed_count = 0;
     
     for (int i = 0; i < fcn_count; i++) {
+        system("rm dummy");
+
         passed = true;
         fcns[i]();
         printf("%-30s", fcn_name);
