@@ -92,6 +92,20 @@ void log_flush_buffer() {
 
     assert((recs * rec_size) % XNPG_SZ == log->page_off);
 
+    //read file and make sure on-disk logs match those in buffer
+    //not using iterator directly to attempt to keep tests isolated
+    struct xnfile *handle;
+    assert(xnfile_create("dummy", false, false, &handle));
+    uint8_t *ptr;
+    assert(xnfile_mmap(handle, 0, handle->block_size * 2, (void**)&ptr));
+    off_t off = 0;
+    for (int i = 0; i < recs; i++) {
+        assert(memcmp(ptr + off, buf, rec_size) == 0);   
+        off += rec_size; 
+    }
+    assert(xnfile_munmap(ptr, handle->block_size * 2));
+    assert(xnfile_close(handle));
+
     free(buf);
     assert(xnlog_free(log));
 }
