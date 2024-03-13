@@ -5,6 +5,8 @@ XenonDB is a basic storage engine for educational purposes.  The goal is a basic
 ACID properties.  The engine is implemented in C.
 
 ## Infrastructure
+We need all-or-nothing semantics when allocating memory in functions that can fail.  If a failure occurs, ALL memory allocations in that function need to be released before the function returns an error code.  This keeps memory management simple(r).
+
 xn_ok and xn_fail are the two status macros that all functions that could result in an error return.  xn_ensure is a macro used to exit a function with a failure status if the argument evaluates to false.  This macro is wrapped around all functions that could possibly return an error.  
 
 The code

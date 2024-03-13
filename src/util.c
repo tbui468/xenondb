@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
+void xn_free(uint8_t **ptr) {
+    free(*ptr);
+}
+
 /*
 static int _all_ptr_count_ = 0;
 static int _defer_ptr_count_ = 0;

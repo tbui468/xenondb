@@ -84,9 +84,7 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
         if (type == XNLOGT_COMMIT && cur_tx_id == tx_id) {
             break;
         } else if (type == XNLOGT_UPDATE && cur_tx_id == tx_id) {
-            uint8_t *buf;
-            xn_ensure(xn_malloc(data_size, (void**)&buf));
-            xnmm_defer(buf);
+            xnmm_scoped_alloc(uint8_t*, buf, xn_malloc(data_size, (void**)&buf), xn_free);
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
             //writing changes back to file (not the log)

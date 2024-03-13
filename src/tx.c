@@ -26,13 +26,11 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
         xn_ensure(xntbl_create(&tx->mod_pgs));
 
         size_t rec_size = xnlog_record_size(0);
-        uint8_t *rec;
-        xn_ensure(xn_malloc(rec_size, (void**)&rec));
-        xnmm_defer(rec);
+        xnmm_scoped_alloc(uint8_t*, rec, xn_malloc(rec_size, (void**)&rec), xn_free);
 
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, rec));
         xn_ensure(xnlog_append(db->log, rec, rec_size));
-    } else {
+    } else { //XNTXMODE_RD
         xn_ensure(xn_mutex_lock(&db->committed_wrtx_lock));
         if (db->committed_wrtx) {
             tx->mod_pgs = db->committed_wrtx->mod_pgs;
@@ -94,9 +92,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xn_ensure(xn_mutex_lock(&tx->db->committed_wrtx_lock));
 
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *rec;
-    xn_ensure(xn_malloc(rec_size, (void**)&rec));
-    xnmm_defer(rec);
+    xnmm_scoped_alloc(uint8_t*, rec, xn_malloc(rec_size, (void**)&rec), xn_free);
 
     xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));
     xn_ensure(xnlog_append(tx->db->log, rec, rec_size));

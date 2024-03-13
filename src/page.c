@@ -50,18 +50,14 @@ xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, in
     memcpy(cpy + offset, buf, size);
 
     if (log) {
-        uint8_t *update_data;
         size_t data_size = size + sizeof(uint64_t) + sizeof(int);; //including page index and offset
-        xn_ensure(xn_malloc(data_size, (void**)&update_data));
-        xnmm_defer(update_data);
+        xnmm_scoped_alloc(uint8_t*, update_data, xn_malloc(data_size, (void**)&update_data), xn_free);
         memcpy(update_data, &page->idx, sizeof(uint64_t));
         memcpy(update_data + sizeof(uint64_t), &offset, sizeof(int));
         memcpy(update_data + sizeof(uint64_t) + sizeof(int), buf, size);
 
-        uint8_t *rec;
         size_t rec_size = xnlog_record_size(data_size);
-        xn_ensure(xn_malloc(rec_size, (void**)&rec));
-        xnmm_defer(rec);
+        xnmm_scoped_alloc(uint8_t*, rec, xn_malloc(rec_size, (void**)&rec), xn_free);
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_UPDATE, data_size, update_data, rec));
         xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
     }
@@ -143,9 +139,7 @@ xnresult_t xnpgr_allocate_page(struct xnpg *meta_page, struct xntx *tx, struct x
     xn_ensure(xnpgr_find_free_page(meta_page, tx, page));
 
     //zero out new page data
-    uint8_t *buf;
-    xn_ensure(xn_malloc(XNPG_SZ, (void**)&buf));
-    xnmm_defer(buf);
+    xnmm_scoped_alloc(uint8_t*, buf, xn_malloc(XNPG_SZ, (void**)&buf), xn_free);
 
     memset(buf, 0, XNPG_SZ);
     xn_ensure(xnpg_write(page, tx, buf, 0, XNPG_SZ, true));

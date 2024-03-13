@@ -13,6 +13,12 @@
 
 #define xnresult_t __attribute__((warn_unused_result)) bool
 
+void xn_free(uint8_t **ptr);
+
+#define xnmm_scoped_alloc(type, name, alloc_fcn_call, free_fcn) \
+    __attribute__((__cleanup__(free_fcn))) type name; \
+    xn_ensure(alloc_fcn_call)
+
 /*
 void xnmm_init();
 void xnmm_defer(void *ptr);
@@ -27,8 +33,6 @@ bool xn_aligned_malloc(size_t size, void **ptr);*/
     int _defer_ptr_count_ = 0; \
     void *_all_ptrs_[16]; \
     void *_defer_ptrs_[16] \
-
-#define xnmm_defer(p) _defer_ptrs_[_defer_ptr_count_++] = p
 
 #define xnmm_cleanup_all() for (int i = _all_ptr_count_ - 1; i >= 0; i--) \
         free(_all_ptrs_[i])
