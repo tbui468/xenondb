@@ -25,17 +25,15 @@ void db_recover() {
         assert(xndb_free(db));
     }
 
-    uint8_t *data;
+    uint8_t *data = malloc(XNPG_SZ);
     {
         //copy meta page into buffer to compare after recovery
         struct xnfile *handle;
         assert(xnfile_create("dummy", false, false, &handle));
-        assert(xn_malloc(XNPG_SZ, (void**)&data));
         assert(xnfile_read(handle, data, 0, XNPG_SZ));
 
         //scramble data in metadata page
-        uint8_t *junk;
-        assert(xn_malloc(XNPG_SZ, (void**)&junk));
+        uint8_t *junk = malloc(XNPG_SZ);
         memset(junk, 'a', XNPG_SZ);
         assert(xnfile_write(handle, junk, 0, XNPG_SZ));
         assert(xnfile_close(handle));

@@ -25,8 +25,7 @@ void table_insert_buffer() {
     struct xnfile *handle;
     assert(xnfile_create("dummy", true, false, &handle));
 
-    uint8_t *buf;
-    assert(xn_malloc(XNPG_SZ, (void**)&buf));
+    uint8_t *buf = malloc(XNPG_SZ);
     struct xnpg page = { .file_handle = handle, .idx = 0 };
 
     assert(xntbl_insert(tbl, &page, buf));
@@ -49,8 +48,7 @@ void table_find_buffer() {
 
     //insert, find and check data
     {
-        uint8_t *buf;
-        assert(xn_malloc(XNPG_SZ, (void**)&buf));
+        uint8_t *buf = malloc(XNPG_SZ);
         const char *msg = "hello";
         strcpy(buf, msg);
         struct xnpg page = { .file_handle = handle, .idx = 0 };

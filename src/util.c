@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
+/*
 static int _all_ptr_count_ = 0;
 static int _defer_ptr_count_ = 0;
 static void *_all_ptrs_[16];
@@ -54,7 +55,7 @@ bool xn_aligned_malloc(size_t size, void **ptr) {
 
     return false;
 }
-
+*/
 
 xnresult_t xn_realpath(const char *path, char *out) {
     xnmm_init();

@@ -12,8 +12,7 @@ void page_copy() {
 
     const char *msg = "hello";
     assert(xnfile_write(handle, msg, 0, strlen(msg) + 1));
-    uint8_t *buf;
-    assert(xn_malloc(XNPG_SZ, (void**)&buf));
+    uint8_t *buf = malloc(XNPG_SZ);
 
     //basic copy
     {
@@ -41,8 +40,7 @@ void page_flush() {
 
     const char *msg = "hello";
     assert(xnfile_write(handle, msg, 0, strlen(msg) + 1));
-    uint8_t *buf;
-    assert(xn_malloc(XNPG_SZ, (void**)&buf));
+    uint8_t *buf = malloc(XNPG_SZ);
 
     struct xnpg page = { .file_handle = handle, .idx = 0 };
     assert(xnpg_copy(&page, buf));

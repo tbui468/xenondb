@@ -19,8 +19,7 @@ void logitr_create_on_nonempty_log() {
     assert(xnlog_create("dummy", true, &log));
 
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append 3 records
@@ -46,8 +45,7 @@ void logitr_iterate_from_beginning() {
     assert(xnlog_create("dummy", true, &log));
 
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append 3 records
@@ -82,8 +80,7 @@ void logitr_iterate_from_seek() {
     assert(xnlog_create("dummy", true, &log));
 
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append 3 records

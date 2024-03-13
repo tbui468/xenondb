@@ -11,8 +11,7 @@ void log_create_free() {
 
 void log_make_nonupdate_record() {
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
 
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
     assert(xnlog_serialize_record(1, XNLOGT_COMMIT, 0, NULL, buf)); //overwriting old record since we don't need it
@@ -22,8 +21,7 @@ void log_make_nonupdate_record() {
 void log_make_update_record() {
     const char *msg = "hello";
     size_t rec_size = xnlog_record_size(strlen(msg) + 1);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
 
     assert(xnlog_serialize_record(1, XNLOGT_UPDATE, strlen(msg) + 1, (uint8_t*)msg, buf));
     free(buf);
@@ -35,8 +33,7 @@ void log_append_record() {
 
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append one record
@@ -55,8 +52,7 @@ void log_append_record_overflow() {
     assert(xnlog_create("dummy", true, &log));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append records until overflow log buffer
@@ -77,8 +73,7 @@ void log_flush_buffer() {
     assert(xnlog_create("dummy", true, &log));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
-    uint8_t *buf;
-    assert(xn_malloc(rec_size, (void**)&buf));
+    uint8_t *buf = malloc(rec_size);
     assert(xnlog_serialize_record(1, XNLOGT_START, 0, NULL, buf));
 
     //append records until overflow log buffer

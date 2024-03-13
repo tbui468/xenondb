@@ -128,6 +128,10 @@ xnresult_t xnpgr_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg 
     //set bit to 'free'
     uint8_t byte;
     xn_ensure(xnpg_read(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t)));
+
+    //ensure that page is actually allocated
+    xn_ensure((byte & (1 << (page.idx % 8))) != 0);
+
     byte &= ~(1 << (page.idx % 8));
     xn_ensure(xnpg_write(meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page.idx), sizeof(uint8_t), true));
     return xn_ok();
