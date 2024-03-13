@@ -16,3 +16,4 @@ xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_
 xnresult_t xnfile_read(struct xnfile *handle, char *buf, off_t off, size_t size);
 xnresult_t xnfile_mmap(struct xnfile *handle, off_t offset, size_t len, void **out_ptr);
 xnresult_t xnfile_munmap(void *addr, size_t len);
+xnresult_t xnfile_grow(struct xnfile *handle);

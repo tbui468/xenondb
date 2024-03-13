@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "file.h"
+#include "page.h"
 
 #include <libgen.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/mman.h>
+#include <math.h>
 
 
 static xnresult_t xnfile_sync_parent(const char* child_path) {
@@ -138,5 +140,13 @@ xnresult_t xnfile_mmap(struct xnfile *handle, off_t offset, size_t len, void **o
 xnresult_t xnfile_munmap(void *addr, size_t len) {
     xnmm_init();
     xn_ensure((munmap(addr, len)) == 0);
+    return xn_ok();
+}
+
+xnresult_t xnfile_grow(struct xnfile *handle) {
+    xnmm_init();
+    size_t new_size = ceil((handle->size * 1.2f) / XNPG_SZ) * XNPG_SZ;
+    xn_ensure(xnfile_set_size(handle, new_size));
+    xn_ensure(xnfile_sync(handle));
     return xn_ok();
 }

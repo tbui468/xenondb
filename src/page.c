@@ -93,9 +93,9 @@ xnresult_t xnpg_read(struct xnpg *page, struct xntx *tx, uint8_t *buf, int offse
 
 static xnresult_t xnpgr_find_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *new_page) {
     xnmm_init();
-    int page_count = tx->db->file_handle->size / XNPG_SZ;
+    int byte_count = tx->db->file_handle->size / XNPG_SZ / 8;
     int i, j;
-    for (i = 0; i < page_count; i++) {
+    for (i = 0; i < byte_count; i++) {
         uint8_t byte;
         xn_ensure(xnpg_read(meta_page, tx, &byte, i * sizeof(uint8_t), sizeof(uint8_t)));
         for (j = 0; j < 8; j++) {
@@ -107,8 +107,10 @@ static xnresult_t xnpgr_find_free_page(struct xnpg *meta_page, struct xntx *tx, 
         }
     }
 
-    //TODO should this be xn_ensure(false)?
-    return false;
+    //if no free page found, grow file and set i = byte_count to allocate fresh page 
+    xn_ensure(xnfile_grow(tx->db->file_handle));
+    i = byte_count;
+    j = 0;
 
 found_free_bit:
     new_page->file_handle = meta_page->file_handle;

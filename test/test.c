@@ -10,6 +10,7 @@
 #include "logitr_test.h"
 #include "db_test.h"
 #include "multithreading_test.h"
+#include "paging_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -26,6 +27,7 @@ int main() {
     logitr_tests();
     db_tests();
     multithreading_tests();
+    paging_tests();
     
     int passed_count = 0;
     
@@ -34,7 +36,7 @@ int main() {
 
         passed = true;
         fcns[i]();
-        printf("%-30s", fcn_name);
+        printf("%-35s", fcn_name);
         if (passed) {
             printf("%s%s%s\n", KGRN, "passed", RESET);
             passed_count++;

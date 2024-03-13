@@ -33,6 +33,7 @@ xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_lo
 
 xnresult_t xnlog_free(struct xnlog *log) {
     xnmm_init();
+    xn_ensure(xnfile_close(log->page.file_handle));
     free(log->buf);
     free(log);
     return xn_ok();
@@ -40,6 +41,8 @@ xnresult_t xnlog_free(struct xnlog *log) {
 
 xnresult_t xnlog_flush(struct xnlog *log) {
     xnmm_init();
+    if (log->page.idx >= log->page.file_handle->size / XNPG_SZ)
+        xn_ensure(xnfile_grow(log->page.file_handle));
     xn_ensure(xnpg_flush(&log->page, log->buf));
     //don't need to call xnfile_sync since log files are opend with O_DATASYNC flag
     return xn_ok();
