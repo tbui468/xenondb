@@ -5,17 +5,17 @@
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) {
     xnmm_init();
     struct xndb *db;
-    xnmm_alloc(&db, xn_ensure(xn_malloc(sizeof(struct xndb), (void**)&db)), xn_free);
+    xnmm_alloc(xn_free, xn_malloc, (void**)&db, sizeof(struct xndb));
 
-    xnmm_alloc(&db->wrtx_lock, xn_ensure(xnmtx_create(&db->wrtx_lock)), xnmtx_free);
-    xnmm_alloc(&db->rdtx_count_lock, xn_ensure(xnmtx_create(&db->rdtx_count_lock)), xnmtx_free);
-    xnmm_alloc(&db->committed_wrtx_lock, xn_ensure(xnmtx_create(&db->committed_wrtx_lock)), xnmtx_free);
-    xnmm_alloc(&db->tx_id_counter_lock, xn_ensure(xnmtx_create(&db->tx_id_counter_lock)), xnmtx_free);
+    xnmm_alloc(xnmtx_free, xnmtx_create, &db->wrtx_lock);
+    xnmm_alloc(xnmtx_free, xnmtx_create, &db->rdtx_count_lock);
+    xnmm_alloc(xnmtx_free, xnmtx_create, &db->committed_wrtx_lock);
+    xnmm_alloc(xnmtx_free, xnmtx_create, &db->tx_id_counter_lock);
 
     //Use xnalloc
     xn_ensure(xnlog_create("log", create, &db->log));
 
-    xnmm_alloc(&db->file_handle, xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle)), xnfile_close);
+    xnmm_alloc(xnfile_close, xnfile_create, &db->file_handle, dir_path, create, false);
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
 
     //Use xnalloc
@@ -32,7 +32,7 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
         xn_ensure(xntx_create(db, XNTXMODE_WR, &tx));
 
         uint8_t *buf; //TODO should this be a scoped ptr?
-        xn_ensure(xn_malloc(XNPG_SZ, (void**)&buf));
+        xn_ensure(xn_malloc((void**)&buf, XNPG_SZ));
         memset(buf, 0, XNPG_SZ);
         struct xnpg page = { .file_handle = db->file_handle, .idx = 0 };
         xn_ensure(xnpg_write(&page, tx, buf, 0, XNPG_SZ, true));
@@ -86,7 +86,7 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
         if (type == XNLOGT_COMMIT && cur_tx_id == tx_id) {
             break;
         } else if (type == XNLOGT_UPDATE && cur_tx_id == tx_id) {
-            xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(data_size, &scoped_ptr)), xn_free);
+            xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(&scoped_ptr, data_size)), xn_free);
             uint8_t *buf = (uint8_t*)scoped_ptr;
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 

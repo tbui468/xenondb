@@ -6,9 +6,9 @@
 xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_log) {
     xnmm_init();
     struct xnlog *log;
-    xn_ensure(xn_malloc(sizeof(struct xnlog), (void**)&log));
+    xn_ensure(xn_malloc((void**)&log, sizeof(struct xnlog)));
 
-    xn_ensure(xnfile_create(log_path, create, true, &log->page.file_handle));
+    xn_ensure(xnfile_create(&log->page.file_handle, log_path, create, true));
     xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
 
     //make iterator here to get last record offset
@@ -104,7 +104,7 @@ xnresult_t xnlog_serialize_record(int tx_id,
 xnresult_t xnlogitr_create(struct xnlog *log, struct xnlogitr **out_itr) {
     xnmm_init();
     struct xnlogitr *itr;
-    xn_ensure(xn_malloc(sizeof(struct xnlogitr), (void**)&itr));
+    xn_ensure(xn_malloc((void**)&itr, sizeof(struct xnlogitr)));
     xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&itr->buf));
     itr->page = log->page;
     itr->page.idx = 0;

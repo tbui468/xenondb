@@ -6,8 +6,8 @@
 xnresult_t xntbl_create(struct xntbl **out_tbl) {
     xnmm_init();
     struct xntbl *tbl;
-    xn_ensure(xn_malloc(sizeof(struct xntbl), (void**)&tbl));
-    xn_ensure(xn_malloc(sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS, (void**)&tbl->entries));
+    xn_ensure(xn_malloc((void**)&tbl, sizeof(struct xntbl)));
+    xn_ensure(xn_malloc((void**)&tbl->entries, sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS));
     memset(tbl->entries, 0, sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS);
 
     *out_tbl = tbl;
@@ -66,7 +66,7 @@ xnresult_t xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
     //insert at beginning of linked-list
     struct xnentry* head = tbl->entries[bucket];
     struct xnentry* entry;
-    xn_ensure(xn_malloc(sizeof(struct xnentry), (void**)&entry));
+    xn_ensure(xn_malloc((void**)&entry, sizeof(struct xnentry)));
     entry->next = head;
     entry->pg_idx = page->idx;
     entry->val = val;

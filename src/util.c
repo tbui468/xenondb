@@ -9,7 +9,7 @@ bool xn_free(void **ptr) {
     return true;
 }
 
-bool xn_malloc(size_t size, void **ptr) {
+bool xn_malloc(void **ptr, size_t size) {
     *ptr = malloc(size);
     return *ptr != NULL;
 }
@@ -122,17 +122,29 @@ xnresult_t xn_wait_until_zero(int *count, pthread_mutex_t *lock, pthread_cond_t 
     return xn_ok();
 }
 
+xnresult_t xnmtx_init(pthread_mutex_t **mtx) {
+    xnmm_init();
+    xn_ensure(pthread_mutex_init(*mtx, NULL) == 0);
+    return xn_ok();
+}
+
+xnresult_t xnmtx_destroy(void **mtx) {
+    xnmm_init();
+    pthread_mutex_t *m = (pthread_mutex_t*)(*mtx);
+    xn_ensure(pthread_mutex_destroy(m) == 0);
+    return xn_ok();
+}
+
 xnresult_t xnmtx_create(pthread_mutex_t **mtx) {
     xnmm_init();
-    xnmm_alloc(mtx, xn_ensure(xn_malloc(sizeof(pthread_mutex_t), (void**)mtx)), xn_free);
-    xnmm_alloc(mtx, xn_ensure(xn_mutex_init(*mtx)), xnmtx_free);
+    xnmm_alloc(xn_free, xn_malloc, (void**)mtx, sizeof(pthread_mutex_t));
+    xnmm_alloc(xnmtx_destroy, xnmtx_init, mtx);
     return xn_ok();
 }
 
 xnresult_t xnmtx_free(void **mtx) {
     xnmm_init();
-    pthread_mutex_t *m = (pthread_mutex_t*)(*mtx);
-    xn_ensure(pthread_mutex_destroy(m) == 0);
+    xn_ensure(xnmtx_destroy(mtx));
     xn_free(mtx);
     return xn_ok();
 }

@@ -27,11 +27,10 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
     return xn_ok();
 }
 
-
-xnresult_t xnfile_create(const char *relpath, bool create, bool direct, struct xnfile **out_handle) {
+xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool create, bool direct) {
     xnmm_init();
     struct xnfile *handle;
-    xn_ensure(xn_malloc(sizeof(struct xnfile), (void**)&handle));
+    xn_ensure(xn_malloc((void**)&handle, sizeof(struct xnfile)));
 
     int flags = O_RDWR;
     if (create) {
@@ -47,7 +46,7 @@ xnresult_t xnfile_create(const char *relpath, bool create, bool direct, struct x
 
     char buf[PATH_MAX];
     xn_ensure(xn_realpath(relpath, buf));
-    xn_ensure(xn_malloc(strlen(buf) + 1, (void**)&handle->path));
+    xn_ensure(xn_malloc((void**)&handle->path, strlen(buf) + 1));
     strcpy(handle->path, buf);
 
     struct stat s;

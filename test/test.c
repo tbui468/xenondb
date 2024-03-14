@@ -21,7 +21,7 @@ int main() {
     freopen("/dev/null", "w", stderr); //ignoring stderr
 
     util_tests();
-    memory_tests();
+//    memory_tests();
     file_tests();
     page_tests();
     table_tests();

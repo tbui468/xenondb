@@ -23,12 +23,20 @@ struct xnmm_alloc {
     __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
     checked_alloc_fcn_call; \
 
-#define xnmm_alloc(ptp, checked_alloc_fcn_call, free_fcn) \
+/*
+#define xnmm_alloc(ptp, alloc_fcn_call, free_fcn) \
     _allocs_[_alloc_count_].ptr = (void**)ptp; \
     _allocs_[_alloc_count_++].fcn = free_fcn; \
-    checked_alloc_fcn_call;
+    xn_ensure(alloc_fcn_call)*/
 
-bool xn_malloc(size_t size, void **ptr);
+#define first_arg(n, ...) n
+
+#define xnmm_alloc(free_fcn, alloc_fcn, ...) \
+    _allocs_[_alloc_count_].ptr = (void**)first_arg(__VA_ARGS__); \
+    _allocs_[_alloc_count_++].fcn = free_fcn; \
+    xn_ensure(alloc_fcn(__VA_ARGS__))
+
+bool xn_malloc(void**ptr, size_t size);
 bool xn_aligned_malloc(size_t size, void **ptr);
 
 #define xnmm_init() int _all_ptr_count_ = 0; \
@@ -61,6 +69,8 @@ xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock);
 xnresult_t xn_atomic_decrement_and_signal(int *i, pthread_mutex_t *lock, pthread_cond_t *cv);
 xnresult_t xn_atomic_decrement(int *i, pthread_mutex_t *lock);
 xnresult_t xn_wait_until_zero(int *count, pthread_mutex_t *lock, pthread_cond_t *cv);
+xnresult_t xnmtx_init(pthread_mutex_t **mtx);
+xnresult_t xnmtx_destroy(void **mtx);
 xnresult_t xnmtx_create(pthread_mutex_t **mtx);
 xnresult_t xnmtx_free(void **mtx);
 

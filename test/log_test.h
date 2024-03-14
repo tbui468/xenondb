@@ -90,7 +90,7 @@ void log_flush_buffer() {
     //read file and make sure on-disk logs match those in buffer
     //not using iterator directly to attempt to keep tests isolated
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, false, &handle));
+    assert(xnfile_create(&handle, "dummy", false, false));
     uint8_t *ptr;
     assert(xnfile_mmap(handle, 0, handle->block_size * 2, (void**)&ptr));
     off_t off = 0;

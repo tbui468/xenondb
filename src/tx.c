@@ -12,7 +12,7 @@ pthread_cond_t mem_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
     xnmm_init();
     struct xntx *tx;
-    xn_ensure(xn_malloc(sizeof(struct xntx), (void**)&tx));
+    xn_ensure(xn_malloc((void**)&tx, sizeof(struct xntx)));
 
     xn_ensure(xn_mutex_lock(db->tx_id_counter_lock));
     tx->id = db->tx_id_counter++;
@@ -20,13 +20,13 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
 
     tx->db = db;
     tx->rdtx_count = 0;
-    xnmm_alloc(&tx->rdtx_count_lock, xn_ensure(xnmtx_create(&tx->rdtx_count_lock)), xnmtx_free);
+    xnmm_alloc(xnmtx_free, xnmtx_create, &tx->rdtx_count_lock);
     if (mode == XNTXMODE_WR) {
         xn_ensure(xn_mutex_lock(db->wrtx_lock));
         xn_ensure(xntbl_create(&tx->mod_pgs));
 
         size_t rec_size = xnlog_record_size(0);
-        xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(rec_size, &scoped_ptr)), xn_free);
+        xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(&scoped_ptr, rec_size)), xn_free);
         uint8_t *rec = (uint8_t*)scoped_ptr;
 
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, rec));
@@ -93,7 +93,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock));
 
     size_t rec_size = xnlog_record_size(0);
-    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(rec_size, &scoped_ptr)), xn_free);
+    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(&scoped_ptr, rec_size)), xn_free);
     uint8_t *rec = (uint8_t*)scoped_ptr;
 
     xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));

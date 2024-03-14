@@ -29,7 +29,7 @@ void db_recover() {
     {
         //copy meta page into buffer to compare after recovery
         struct xnfile *handle;
-        assert(xnfile_create("dummy", false, false, &handle));
+        assert(xnfile_create(&handle, "dummy", false, false));
         assert(xnfile_read(handle, data, 0, XNPG_SZ));
 
         //scramble data in metadata page

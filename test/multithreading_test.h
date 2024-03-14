@@ -74,7 +74,7 @@ void multithreading_page_allocation() {
     }
 
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, false, &handle));
+    assert(xnfile_create(&handle, "dummy", false, false));
     uint8_t buf;
     assert(xnfile_read(handle, &buf, 0, sizeof(uint8_t)));
     assert(buf == 255);

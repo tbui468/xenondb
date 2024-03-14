@@ -23,7 +23,7 @@ void table_insert_buffer() {
     struct xntbl *tbl;
     assert(xntbl_create(&tbl));
     struct xnfile *handle;
-    assert(xnfile_create("dummy", true, false, &handle));
+    assert(xnfile_create(&handle, "dummy", true, false));
 
     uint8_t *buf = malloc(XNPG_SZ);
     struct xnpg page = { .file_handle = handle, .idx = 0 };
@@ -38,7 +38,7 @@ void table_find_buffer() {
     struct xntbl *tbl;
     assert(xntbl_create(&tbl));
     struct xnfile *handle;
-    assert(xnfile_create("dummy", true, false, &handle));
+    assert(xnfile_create(&handle, "dummy", true, false));
 
     //not found
     {
@@ -67,7 +67,7 @@ void table_insert_mmap() {
     struct xntbl *tbl;
     assert(xntbl_create(&tbl));
     struct xnfile *handle;
-    assert(xnfile_create("dummy", true, false, &handle));
+    assert(xnfile_create(&handle, "dummy", true, false));
     assert(xnfile_set_size(handle, XNPG_SZ));
     assert(handle->size == XNPG_SZ);
 
@@ -91,7 +91,7 @@ void table_find_mmap() {
     struct xntbl *tbl;
     assert(xntbl_create(&tbl));
     struct xnfile *handle;
-    assert(xnfile_create("dummy", true, false, &handle));
+    assert(xnfile_create(&handle, "dummy", true, false));
     assert(xnfile_set_size(handle, XNPG_SZ));
     assert(handle->size == XNPG_SZ);
 

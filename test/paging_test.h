@@ -18,7 +18,7 @@ void paging_allocate_page() {
 
     //read file directly and assert that 3 pages allocated (metadata + 2 other pages)
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, false, &handle));
+    assert(xnfile_create(&handle, "dummy", false, false));
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 7);
@@ -51,7 +51,7 @@ void paging_free_page() {
 
     //read file directly and assert that 2 pages allocated (metadata + 1 other page)
     struct xnfile *handle;
-    assert(xnfile_create("dummy", false, false, &handle));
+    assert(xnfile_create(&handle, "dummy", false, false));
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 3);
