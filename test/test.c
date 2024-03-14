@@ -11,6 +11,7 @@
 #include "db_test.h"
 #include "multithreading_test.h"
 #include "paging_test.h"
+#include "memory_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -20,6 +21,7 @@ int main() {
     freopen("/dev/null", "w", stderr); //ignoring stderr
 
     util_tests();
+    memory_tests();
     file_tests();
     page_tests();
     table_tests();

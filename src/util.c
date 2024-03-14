@@ -4,8 +4,9 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
-void xn_free(uint8_t **ptr) {
+bool xn_free(void **ptr) {
     free(*ptr);
+    return true;
 }
 
 /*

@@ -82,7 +82,7 @@ void multithreading_page_allocation() {
     assert(buf == 255);
     assert(xnfile_read(handle, &buf, sizeof(uint8_t) * 2, sizeof(uint8_t)));
     assert(buf == 0);
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 
     assert(xndb_free(db));
 }

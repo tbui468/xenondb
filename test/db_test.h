@@ -36,7 +36,7 @@ void db_recover() {
         uint8_t *junk = malloc(XNPG_SZ);
         memset(junk, 'a', XNPG_SZ);
         assert(xnfile_write(handle, junk, 0, XNPG_SZ));
-        assert(xnfile_close(handle));
+        assert(xnfile_close((void**)&handle));
         free(junk);
     }
 

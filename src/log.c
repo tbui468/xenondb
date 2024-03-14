@@ -33,7 +33,7 @@ xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_lo
 
 xnresult_t xnlog_free(struct xnlog *log) {
     xnmm_init();
-    xn_ensure(xnfile_close(log->page.file_handle));
+    xn_ensure(xnfile_close((void**)&log->page.file_handle));
     free(log->buf);
     free(log);
     return xn_ok();
@@ -126,7 +126,8 @@ xnresult_t xnlogitr_seek(struct xnlogitr *itr, uint64_t page_idx, int page_off) 
 xnresult_t xnlogitr_read_span(const struct xnlogitr *itr, uint8_t *buf, off_t off, size_t size) {
     xnmm_init();
     struct xnpg page = itr->page;
-    xnmm_scoped_alloc(uint8_t*, page_buf, xn_aligned_malloc(XNPG_SZ, (void**)&page_buf), xn_free);
+    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_aligned_malloc(XNPG_SZ, &scoped_ptr)), xn_free);
+    uint8_t *page_buf = (uint8_t*)scoped_ptr;
 
     int page_off = itr->page_off + off;
     if (page_off >= XNPG_SZ) {

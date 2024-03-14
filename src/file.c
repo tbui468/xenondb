@@ -64,10 +64,10 @@ xnresult_t xnfile_create(const char *relpath, bool create, bool direct, struct x
     return xn_ok();
 }
 
-xnresult_t xnfile_close(struct xnfile *handle) {
+xnresult_t xnfile_close(void **handle) {
     xnmm_init();
-    xn_ensure(close(handle->fd) == 0);
-    free(handle);
+    xn_ensure(close(((struct xnfile*)(*handle))->fd) == 0);
+    free(*handle);
     return xn_ok();
 }
 

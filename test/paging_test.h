@@ -22,7 +22,7 @@ void paging_allocate_page() {
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 7);
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
     free(buf);
 }
 
@@ -55,7 +55,7 @@ void paging_free_page() {
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 3);
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
     free(buf);
 }
 

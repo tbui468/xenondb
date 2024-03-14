@@ -99,7 +99,7 @@ void log_flush_buffer() {
         off += rec_size; 
     }
     assert(xnfile_munmap(ptr, handle->block_size * 2));
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 
     free(buf);
     assert(xnlog_free(log));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <string.h>
 
 void (*fcns[64])();
 char fcn_name[128];

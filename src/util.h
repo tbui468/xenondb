@@ -7,17 +7,26 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
-//#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #define xnresult_t __attribute__((warn_unused_result)) bool
 
-void xn_free(uint8_t **ptr);
+bool xn_free(void **ptr);
 
-#define xnmm_scoped_alloc(type, name, alloc_fcn_call, free_fcn) \
-    __attribute__((__cleanup__(free_fcn))) type name; \
-    xn_ensure(alloc_fcn_call)
+struct xnmm_alloc {
+    void** ptr;
+    bool(*fcn)(void**);
+};
+
+#define xnmm_scoped_alloc(scoped_ptr, checked_alloc_fcn_call, free_fcn) \
+    __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
+    checked_alloc_fcn_call; \
+
+#define xnmm_alloc(ptp, checked_alloc_fcn_call, free_fcn) \
+    _allocs_[_alloc_count_].ptr = (void**)ptp; \
+    _allocs_[_alloc_count_++].fcn = free_fcn; \
+    checked_alloc_fcn_call;
 
 /*
 void xnmm_init();
@@ -30,27 +39,18 @@ bool xn_malloc(size_t size, void **ptr);
 bool xn_aligned_malloc(size_t size, void **ptr);*/
 
 #define xnmm_init() int _all_ptr_count_ = 0; \
-    int _defer_ptr_count_ = 0; \
-    void *_all_ptrs_[16]; \
-    void *_defer_ptrs_[16] \
+    int _alloc_count_ = 0; \
+    struct xnmm_alloc _allocs_[16]; \
 
-#define xnmm_cleanup_all() for (int i = _all_ptr_count_ - 1; i >= 0; i--) \
-        free(_all_ptrs_[i])
+#define xnmm_cleanup_all() for (int i = _alloc_count_ - 1; i >= 0; i--) { \
+        _allocs_[i].fcn(_allocs_[i].ptr); \
+        *(_allocs_[i].ptr) = NULL; }
 
-#define xnmm_cleanup_deferred() for (int i = _defer_ptr_count_ - 1; i >= 0; i--) \
-        free(_defer_ptrs_[i]); 
+#define xn_malloc(size, ptr) ((*ptr = malloc(size)) != NULL)
 
+#define xn_aligned_malloc(size, ptr) (posix_memalign(ptr, 4096, size) == 0)
 
-#define xn_malloc(size, ptr) ({*ptr = malloc(size); \
-    if (*ptr != NULL) _all_ptrs_[_all_ptr_count_++] = *ptr; \
-    *ptr != NULL; })
-
-#define xn_aligned_malloc(size, ptr) ({ if (posix_memalign(ptr, 4096, size) == 0) \
-        if (*ptr != NULL) \
-            _all_ptrs_[_all_ptr_count_++] = *ptr; \
-        *ptr != NULL; })
-
-#define xn_ok() ({ xnmm_cleanup_deferred(); true; })
+#define xn_ok() true
 
 #define xn_ensure(b) if (!(b)) { \
                          fprintf(stderr, "%s\n", __func__); \

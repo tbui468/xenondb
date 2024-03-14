@@ -13,7 +13,8 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
 
     xn_ensure(xnlog_create("log", create, &db->log));
 
-    xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle));
+    xnmm_alloc(&db->file_handle, xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle)), xnfile_close);
+    //xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
 
     xn_ensure(xntbl_create(&db->pg_tbl));
@@ -59,7 +60,7 @@ xnresult_t xndb_free(struct xndb *db) {
     xn_ensure(xn_mutex_destroy(&db->rdtx_count_lock));
     xn_ensure(xn_mutex_destroy(&db->committed_wrtx_lock));
     xn_ensure(xn_mutex_destroy(&db->tx_id_counter_lock));
-    xn_ensure(xnfile_close(db->file_handle));
+    xn_ensure(xnfile_close((void**)&db->file_handle));
     xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
     return xn_ok();
@@ -84,7 +85,8 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
         if (type == XNLOGT_COMMIT && cur_tx_id == tx_id) {
             break;
         } else if (type == XNLOGT_UPDATE && cur_tx_id == tx_id) {
-            xnmm_scoped_alloc(uint8_t*, buf, xn_malloc(data_size, (void**)&buf), xn_free);
+            xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(data_size, &scoped_ptr)), xn_free);
+            uint8_t *buf = (uint8_t*)scoped_ptr;
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
             //writing changes back to file (not the log)

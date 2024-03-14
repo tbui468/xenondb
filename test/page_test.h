@@ -29,7 +29,7 @@ void page_copy() {
         
 
     free(buf);
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void page_flush() {
@@ -64,7 +64,7 @@ void page_flush() {
     assert(xnpg_flush(&other_page, buf) == false);
 
     free(buf);
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void page_mmap() {

@@ -9,7 +9,7 @@ struct xnfile {
 };
 
 xnresult_t xnfile_create(const char *name, bool create, bool direct, struct xnfile **handle);
-xnresult_t xnfile_close(struct xnfile *handle);
+xnresult_t xnfile_close(void **handle);
 xnresult_t xnfile_set_size(struct xnfile *handle, size_t size);
 xnresult_t xnfile_sync(struct xnfile *handle);
 xnresult_t xnfile_write(struct xnfile *handle, const char *buf, off_t off, size_t size);

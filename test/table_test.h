@@ -31,7 +31,7 @@ void table_insert_buffer() {
     assert(xntbl_insert(tbl, &page, buf));
     assert(xntbl_free(tbl, false));
 
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void table_find_buffer() {
@@ -60,7 +60,7 @@ void table_find_buffer() {
 
     assert(xntbl_free(tbl, false));
 
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void table_insert_mmap() {
@@ -84,7 +84,7 @@ void table_insert_mmap() {
     assert(xntbl_insert(tbl, &page, ptr));
 
     assert(xntbl_free(tbl, true));
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void table_find_mmap() {
@@ -120,7 +120,7 @@ void table_find_mmap() {
     }
 
     assert(xntbl_free(tbl, true));
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void table_tests() {

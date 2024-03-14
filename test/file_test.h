@@ -9,7 +9,7 @@
 void file_open_close() {
     struct xnfile *handle;
     assert(xnfile_create("dummy", true, false, &handle));
-    assert(xnfile_close(handle));
+    assert(xnfile_close((void**)&handle));
 }
 
 void file_set_size() {
@@ -18,7 +18,7 @@ void file_set_size() {
         assert(xnfile_create("dummy", true, false, &handle));
         assert(xnfile_set_size(handle, 1024));
         assert(handle->size == 1024);
-        assert(xnfile_close(handle));
+        assert(xnfile_close((void**)&handle));
     }
 
 
@@ -26,7 +26,7 @@ void file_set_size() {
         struct xnfile *handle;
         assert(xnfile_create("dummy", true, false, &handle));
         assert(handle->size == 1024);
-        assert(xnfile_close(handle));
+        assert(xnfile_close((void**)&handle));
     }
 }
 
@@ -67,7 +67,7 @@ void file_read_write() {
             char buf[8];
             assert(xnfile_read(handle, buf, 1024, strlen(msg) + 1) == false);
         }
-        assert(xnfile_close(handle));
+        assert(xnfile_close((void**)&handle));
     }
 }
 
@@ -110,7 +110,7 @@ void file_map_unmap() {
             assert(xnfile_mmap(handle, handle->block_size, handle->block_size, &ptr) == false);
         }
 
-        assert(xnfile_close(handle));
+        assert(xnfile_close((void**)&handle));
     }
 }
 
