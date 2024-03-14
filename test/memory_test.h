@@ -149,8 +149,8 @@ void memory_nested_alloc() {
         void *ptr1 = NULL;
         void *ptr2 = NULL;
         assert(nestedok_outerfail(&ptr1, &ptr2) == false);
-//        assert(!ptr1);
-//        assert(!ptr2);
+        assert(!ptr1);
+        assert(ptr2);
     }
     {
         void *ptr1 = NULL;
@@ -161,7 +161,22 @@ void memory_nested_alloc() {
     }
 }
 
+bool scope_fcn(void **ptr) {
+    xnmm_init();
+    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(1, &scoped_ptr)), xn_free);
+    ptr = &scoped_ptr;
+    xn_ensure(*ptr != NULL); //ptr is still in scope
+    return xn_ok();
+}
+
+void memory_scoped_alloc() {
+    void *ptr = NULL;
+    assert(scope_fcn(&ptr));
+    assert(ptr == NULL); //pointer is out of scope
+}
+
 void memory_tests() {
     append_test(memory_basic_alloc);
     append_test(memory_nested_alloc);
+    append_test(memory_scoped_alloc);
 }
