@@ -9,37 +9,8 @@ bool xn_free(void **ptr) {
     return true;
 }
 
-/*
-static int _all_ptr_count_ = 0;
-static int _defer_ptr_count_ = 0;
-static void *_all_ptrs_[16];
-static void *_defer_ptrs_[16];
-
-
-void xnmm_init() {
-    _all_ptr_count_ = 0;
-    _defer_ptr_count_ = 0;
-}
-
-void xnmm_defer(void *ptr) {
-    _defer_ptrs_[_defer_ptr_count_++] = ptr;
-}
-
-void xnmm_cleanup_all() {
-    for (int i = _all_ptr_count_ - 1; i >= 0; i--) 
-        free(_all_ptrs_[i]);
-}
-
-void xnmm_cleanup_deferred() {
-    for (int i = _defer_ptr_count_ - 1; i >= 0; i--) 
-        free(_defer_ptrs_[i]); 
-}
-
-
 bool xn_malloc(size_t size, void **ptr) {
     *ptr = malloc(size);
-    if (*ptr != NULL) 
-        _all_ptrs_[_all_ptr_count_++] = *ptr;
     return *ptr != NULL;
 }
 
@@ -52,15 +23,8 @@ bool xn_aligned_malloc(size_t size, void **ptr) {
     if (size % block_size != 0)
         return false;
 
-    if (posix_memalign(ptr, block_size, size) == 0) {
-        if (*ptr != NULL) 
-            _all_ptrs_[_all_ptr_count_++] = *ptr;
-        return true;
-    }
-
-    return false;
+    return posix_memalign(ptr, block_size, size) == 0;
 }
-*/
 
 xnresult_t xn_realpath(const char *path, char *out) {
     xnmm_init();

@@ -28,15 +28,8 @@ struct xnmm_alloc {
     _allocs_[_alloc_count_++].fcn = free_fcn; \
     checked_alloc_fcn_call;
 
-/*
-void xnmm_init();
-void xnmm_defer(void *ptr);
-
-void xnmm_cleanup_all();
-void xnmm_cleanup_deferred();
-
 bool xn_malloc(size_t size, void **ptr);
-bool xn_aligned_malloc(size_t size, void **ptr);*/
+bool xn_aligned_malloc(size_t size, void **ptr);
 
 #define xnmm_init() int _all_ptr_count_ = 0; \
     int _alloc_count_ = 0; \
@@ -45,10 +38,6 @@ bool xn_aligned_malloc(size_t size, void **ptr);*/
 #define xnmm_cleanup_all() for (int i = _alloc_count_ - 1; i >= 0; i--) { \
         _allocs_[i].fcn(_allocs_[i].ptr); \
         *(_allocs_[i].ptr) = NULL; }
-
-#define xn_malloc(size, ptr) ((*ptr = malloc(size)) != NULL)
-
-#define xn_aligned_malloc(size, ptr) (posix_memalign(ptr, 4096, size) == 0)
 
 #define xn_ok() true
 
