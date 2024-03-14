@@ -15,7 +15,7 @@ struct xntx {
     struct xntbl *mod_pgs;
     struct xndb *db;
 
-    pthread_mutex_t rdtx_count_lock;
+    pthread_mutex_t *rdtx_count_lock;
     int rdtx_count;
     
     int id;

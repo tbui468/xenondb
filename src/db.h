@@ -8,17 +8,17 @@
 
 struct xndb {
     struct xnlog *log;
-    pthread_mutex_t wrtx_lock;
+    pthread_mutex_t *wrtx_lock;
     struct xnfile *file_handle;
     struct xntbl *pg_tbl;
 
-    pthread_mutex_t committed_wrtx_lock;
+    pthread_mutex_t *committed_wrtx_lock;
     struct xntx *committed_wrtx;
 
-    pthread_mutex_t rdtx_count_lock;
+    pthread_mutex_t *rdtx_count_lock;
     int rdtx_count;
 
-    pthread_mutex_t tx_id_counter_lock;
+    pthread_mutex_t *tx_id_counter_lock;
     int tx_id_counter;
 };
 

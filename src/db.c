@@ -4,33 +4,34 @@
 
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) {
     xnmm_init();
-    bool is_new = true; //TODO: should determine this by checking if a file exists
     struct xndb *db;
-    xn_ensure(xn_malloc(sizeof(struct xndb), (void**)&db));
-    xn_ensure(xn_mutex_init(&db->wrtx_lock));
-    xn_ensure(xn_mutex_init(&db->rdtx_count_lock));
-    xn_ensure(xn_mutex_init(&db->committed_wrtx_lock));
+    xnmm_alloc(&db, xn_ensure(xn_malloc(sizeof(struct xndb), (void**)&db)), xn_free);
 
+    xnmm_alloc(&db->wrtx_lock, xn_ensure(xnmtx_create(&db->wrtx_lock)), xnmtx_free);
+    xnmm_alloc(&db->rdtx_count_lock, xn_ensure(xnmtx_create(&db->rdtx_count_lock)), xnmtx_free);
+    xnmm_alloc(&db->committed_wrtx_lock, xn_ensure(xnmtx_create(&db->committed_wrtx_lock)), xnmtx_free);
+    xnmm_alloc(&db->tx_id_counter_lock, xn_ensure(xnmtx_create(&db->tx_id_counter_lock)), xnmtx_free);
+
+    //Use xnalloc
     xn_ensure(xnlog_create("log", create, &db->log));
 
     xnmm_alloc(&db->file_handle, xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle)), xnfile_close);
-    //xn_ensure(xnfile_create(dir_path, create, false, &db->file_handle));
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
 
+    //Use xnalloc
     xn_ensure(xntbl_create(&db->pg_tbl));
 
     db->committed_wrtx = NULL;
     db->rdtx_count = 0;
 
-    xn_ensure(xn_mutex_init(&db->tx_id_counter_lock));
     db->tx_id_counter = 1;
 
     //read in metadata page and set bitmap if new database
     if (create) {
-        struct xntx *tx;
+        struct xntx *tx; //TODO this should be a scoped ptr with tx_rollback if failure
         xn_ensure(xntx_create(db, XNTXMODE_WR, &tx));
 
-        uint8_t *buf;
+        uint8_t *buf; //TODO should this be a scoped ptr?
         xn_ensure(xn_malloc(XNPG_SZ, (void**)&buf));
         memset(buf, 0, XNPG_SZ);
         struct xnpg page = { .file_handle = db->file_handle, .idx = 0 };
@@ -56,10 +57,10 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
 
 xnresult_t xndb_free(struct xndb *db) {
     xnmm_init();
-    xn_ensure(xn_mutex_destroy(&db->wrtx_lock));
-    xn_ensure(xn_mutex_destroy(&db->rdtx_count_lock));
-    xn_ensure(xn_mutex_destroy(&db->committed_wrtx_lock));
-    xn_ensure(xn_mutex_destroy(&db->tx_id_counter_lock));
+    xn_ensure(xnmtx_free((void**)&db->wrtx_lock));
+    xn_ensure(xnmtx_free((void**)&db->rdtx_count_lock));
+    xn_ensure(xnmtx_free((void**)&db->committed_wrtx_lock));
+    xn_ensure(xnmtx_free((void**)&db->tx_id_counter_lock));
     xn_ensure(xnfile_close((void**)&db->file_handle));
     xn_ensure(xntbl_free(db->pg_tbl, true));
     free(db);
