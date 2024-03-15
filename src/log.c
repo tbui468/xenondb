@@ -13,13 +13,13 @@ xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool creat
 
     //make iterator here to get last record offset
     struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(log, &itr));
+    xn_ensure(xnlogitr_create(&itr, log));
     bool valid = true;
     while (valid)
         xn_ensure(xnlogitr_next(itr, &valid));
     log->page.idx = itr->page.idx;
     log->page_off = itr->page_off;
-    xn_ensure(xnlogitr_free(itr));
+    xn_ensure(xnlogitr_free((void**)&itr));
 
     xn_ensure(xn_aligned_malloc((void**)&log->buf, XNPG_SZ));
     xn_ensure(xnpg_copy(&log->page, log->buf));
@@ -102,7 +102,7 @@ xnresult_t xnlog_serialize_record(int tx_id,
     return xn_ok();
 }
 
-xnresult_t xnlogitr_create(struct xnlog *log, struct xnlogitr **out_itr) {
+xnresult_t xnlogitr_create(struct xnlogitr **out_itr, struct xnlog *log) {
     xnmm_init();
     struct xnlogitr *itr;
     xn_ensure(xn_malloc((void**)&itr, sizeof(struct xnlogitr)));
@@ -208,8 +208,9 @@ xnresult_t xnlogitr_next(struct xnlogitr *itr, bool* valid) {
     return xn_ok();
 }
 
-xnresult_t xnlogitr_free(struct xnlogitr *itr) {
+bool xnlogitr_free(void **i) {
     xnmm_init();
+    struct xnlogitr *itr = (struct xnlogitr*)(*i);
     free(itr->buf);
     free(itr);
     return xn_ok();

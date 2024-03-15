@@ -76,9 +76,12 @@ xnresult_t xndb_free(struct xndb *db) {
 
 static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id) {
     xnmm_init();
-    struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(db->log, &itr)); //scoped
+
+    xnmm_scoped_alloc(scoped_ptr, xnlogitr_free, xnlogitr_create, (struct xnlogitr**)&scoped_ptr, db->log);
+    struct xnlogitr *itr = (struct xnlogitr*)scoped_ptr;
+
     xn_ensure(xnlogitr_seek(itr, page_idx, page_off));
+
     bool valid = true;
     while (true) {
         xn_ensure(xnlogitr_next(itr, &valid));
@@ -93,6 +96,7 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
         } else if (type == XNLOGT_UPDATE && cur_tx_id == tx_id) {
             xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, data_size);
             uint8_t *buf = (uint8_t*)scoped_ptr;
+
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
             //writing changes back to file (but not logging)
@@ -103,16 +107,18 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
             xn_ensure(xnpg_write(&page, tx, buf + data_hdr_size, off, size, false));
         }
     }
-    xn_ensure(xnlogitr_free(itr));
+
     return xn_ok();
 }
 
 xnresult_t xndb_recover(struct xndb *db) {
     xnmm_init();
-    struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(db->log, &itr)); //scoped
+
+    xnmm_scoped_alloc(scoped_ptr, xnlogitr_free, xnlogitr_create, (struct xnlogitr**)&scoped_ptr, db->log);
+    struct xnlogitr *itr = (struct xnlogitr*)scoped_ptr;
+
     struct xntx *tx;
-    xn_ensure(xntx_create(&tx, db, XNTXMODE_WR)); //TODO not scoped, but xntx_rollback for any failures
+    xnmm_alloc(xntx_rollback, xntx_create, &tx, db, XNTXMODE_WR);
 
     uint64_t start_pageidx;
     int start_pageoff;
@@ -135,7 +141,6 @@ xnresult_t xndb_recover(struct xndb *db) {
         }
     }
 
-    xn_ensure(xnlogitr_free(itr));
-    xn_ensure(xntx_commit(tx)); //TODO xn_ensure will cause tx to rollback IF commit fails
+    xn_ensure(xntx_commit(tx));
     return xn_ok();
 }

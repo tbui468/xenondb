@@ -8,8 +8,8 @@ void logitr_create_on_empty_log() {
     assert(xnlog_create(&log, "dummy", true));
     
     struct xnlogitr *itr;
-    assert(xnlogitr_create(log, &itr));
-    assert(xnlogitr_free(itr));
+    assert(xnlogitr_create(&itr, log));
+    assert(xnlogitr_free((void**)&itr));
 
     assert(xnlog_free((void**)&log));
 }
@@ -33,8 +33,8 @@ void logitr_create_on_nonempty_log() {
     assert(xnlog_flush(log));
 
     struct xnlogitr *itr;
-    assert(xnlogitr_create(log, &itr));
-    assert(xnlogitr_free(itr));
+    assert(xnlogitr_create(&itr, log));
+    assert(xnlogitr_free((void**)&itr));
 
     free(buf);
     assert(xnlog_free((void**)&log));
@@ -59,7 +59,7 @@ void logitr_iterate_from_beginning() {
     assert(xnlog_flush(log));
 
     struct xnlogitr *itr;
-    assert(xnlogitr_create(log, &itr));
+    assert(xnlogitr_create(&itr, log));
     int count = 0;
     bool valid;
     while (true) {
@@ -69,7 +69,7 @@ void logitr_iterate_from_beginning() {
         count++;
     }
     assert(count == 3);
-    assert(xnlogitr_free(itr));
+    assert(xnlogitr_free((void**)&itr));
 
     free(buf);
     assert(xnlog_free((void**)&log));
@@ -94,7 +94,7 @@ void logitr_iterate_from_seek() {
     assert(xnlog_flush(log));
 
     struct xnlogitr *itr;
-    assert(xnlogitr_create(log, &itr));
+    assert(xnlogitr_create(&itr, log));
 
     bool valid;
 
@@ -117,7 +117,7 @@ void logitr_iterate_from_seek() {
     }
 
     assert(count == 2);
-    assert(xnlogitr_free(itr));
+    assert(xnlogitr_free((void**)&itr));
 
     free(buf);
     assert(xnlog_free((void**)&log));
