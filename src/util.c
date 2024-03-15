@@ -14,7 +14,7 @@ bool xn_malloc(void **ptr, size_t size) {
     return *ptr != NULL;
 }
 
-bool xn_aligned_malloc(size_t size, void **ptr) {
+bool xn_aligned_malloc(void **ptr, size_t size) {
     struct stat fstat;
     if (stat("/", &fstat) != 0)
         return false;

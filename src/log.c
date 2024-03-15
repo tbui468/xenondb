@@ -21,7 +21,7 @@ xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_lo
     log->page_off = itr->page_off;
     xn_ensure(xnlogitr_free(itr));
 
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&log->buf));
+    xn_ensure(xn_aligned_malloc((void**)&log->buf, XNPG_SZ));
     xn_ensure(xnpg_copy(&log->page, log->buf));
     
     log->highest_tx_flushed = -1;
@@ -105,7 +105,7 @@ xnresult_t xnlogitr_create(struct xnlog *log, struct xnlogitr **out_itr) {
     xnmm_init();
     struct xnlogitr *itr;
     xn_ensure(xn_malloc((void**)&itr, sizeof(struct xnlogitr)));
-    xn_ensure(xn_aligned_malloc(XNPG_SZ, (void**)&itr->buf));
+    xn_ensure(xn_aligned_malloc((void**)&itr->buf, XNPG_SZ));
     itr->page = log->page;
     itr->page.idx = 0;
     itr->page_off = -1;
@@ -126,7 +126,7 @@ xnresult_t xnlogitr_seek(struct xnlogitr *itr, uint64_t page_idx, int page_off) 
 xnresult_t xnlogitr_read_span(const struct xnlogitr *itr, uint8_t *buf, off_t off, size_t size) {
     xnmm_init();
     struct xnpg page = itr->page;
-    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_aligned_malloc, XNPG_SZ, &scoped_ptr);
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_aligned_malloc, &scoped_ptr, XNPG_SZ);
     uint8_t *page_buf = (uint8_t*)scoped_ptr;
 
     int page_off = itr->page_off + off;

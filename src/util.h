@@ -12,28 +12,15 @@
 
 #define xnresult_t __attribute__((warn_unused_result)) bool
 
-bool xn_free(void **ptr);
 
 struct xnmm_alloc {
     void** ptr;
     bool(*fcn)(void**);
 };
 
-/*
-#define xnmm_scoped_alloc(scoped_ptr, checked_alloc_fcn_call, free_fcn) \
-    __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
-    checked_alloc_fcn_call; \*/
-
-
 #define xnmm_scoped_alloc(scoped_ptr, free_fcn, alloc_fcn, ...) \
     __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
     xn_ensure(alloc_fcn(__VA_ARGS__)) \
-
-/*
-#define xnmm_alloc(ptp, alloc_fcn_call, free_fcn) \
-    _allocs_[_alloc_count_].ptr = (void**)ptp; \
-    _allocs_[_alloc_count_++].fcn = free_fcn; \
-    xn_ensure(alloc_fcn_call)*/
 
 #define first_arg(n, ...) n
 
@@ -41,9 +28,6 @@ struct xnmm_alloc {
     _allocs_[_alloc_count_].ptr = (void**)first_arg(__VA_ARGS__); \
     _allocs_[_alloc_count_++].fcn = free_fcn; \
     xn_ensure(alloc_fcn(__VA_ARGS__))
-
-bool xn_malloc(void**ptr, size_t size);
-bool xn_aligned_malloc(size_t size, void **ptr);
 
 #define xnmm_init() int _all_ptr_count_ = 0; \
     int _alloc_count_ = 0; \
@@ -60,6 +44,10 @@ bool xn_aligned_malloc(size_t size, void **ptr);
                          xnmm_cleanup_all(); \
                          return false; \
                      }
+
+bool xn_free(void **ptr);
+bool xn_malloc(void**ptr, size_t size);
+bool xn_aligned_malloc(void **ptr, size_t size);
 
 xnresult_t xn_realpath(const char *path, char *out);
 xnresult_t xn_stat(const char *path, struct stat *s);
