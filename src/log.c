@@ -126,7 +126,7 @@ xnresult_t xnlogitr_seek(struct xnlogitr *itr, uint64_t page_idx, int page_off) 
 xnresult_t xnlogitr_read_span(const struct xnlogitr *itr, uint8_t *buf, off_t off, size_t size) {
     xnmm_init();
     struct xnpg page = itr->page;
-    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_aligned_malloc(XNPG_SZ, &scoped_ptr)), xn_free);
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_aligned_malloc, XNPG_SZ, &scoped_ptr);
     uint8_t *page_buf = (uint8_t*)scoped_ptr;
 
     int page_off = itr->page_off + off;

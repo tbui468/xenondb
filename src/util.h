@@ -19,9 +19,15 @@ struct xnmm_alloc {
     bool(*fcn)(void**);
 };
 
+/*
 #define xnmm_scoped_alloc(scoped_ptr, checked_alloc_fcn_call, free_fcn) \
     __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
-    checked_alloc_fcn_call; \
+    checked_alloc_fcn_call; \*/
+
+
+#define xnmm_scoped_alloc(scoped_ptr, free_fcn, alloc_fcn, ...) \
+    __attribute__((__cleanup__(free_fcn))) void* scoped_ptr; \
+    xn_ensure(alloc_fcn(__VA_ARGS__)) \
 
 /*
 #define xnmm_alloc(ptp, alloc_fcn_call, free_fcn) \

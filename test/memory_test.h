@@ -163,7 +163,7 @@ void memory_nested_alloc() {
 
 bool scope_fcn(void **ptr) {
     xnmm_init();
-    xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(&scoped_ptr, 1)), xn_free);
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, 1);
     ptr = &scoped_ptr;
     xn_ensure(*ptr != NULL); //ptr is still in scope
     return xn_ok();

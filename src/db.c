@@ -31,8 +31,9 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
         struct xntx *tx; //TODO this should be a scoped ptr with tx_rollback if failure
         xn_ensure(xntx_create(db, XNTXMODE_WR, &tx));
 
-        uint8_t *buf; //TODO should this be a scoped ptr?
-        xn_ensure(xn_malloc((void**)&buf, XNPG_SZ));
+        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
+        uint8_t *buf = (uint8_t*)scoped_ptr;
+
         memset(buf, 0, XNPG_SZ);
         struct xnpg page = { .file_handle = db->file_handle, .idx = 0 };
         xn_ensure(xnpg_write(&page, tx, buf, 0, XNPG_SZ, true));
@@ -86,7 +87,7 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
         if (type == XNLOGT_COMMIT && cur_tx_id == tx_id) {
             break;
         } else if (type == XNLOGT_UPDATE && cur_tx_id == tx_id) {
-            xnmm_scoped_alloc(scoped_ptr, xn_ensure(xn_malloc(&scoped_ptr, data_size)), xn_free);
+            xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, data_size);
             uint8_t *buf = (uint8_t*)scoped_ptr;
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
