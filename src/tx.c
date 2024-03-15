@@ -9,7 +9,7 @@
 pthread_cond_t disk_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 pthread_cond_t mem_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 
-xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx) {
+xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode) {
     xnmm_init();
     struct xntx *tx;
     xn_ensure(xn_malloc((void**)&tx, sizeof(struct xntx)));
@@ -23,7 +23,7 @@ xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx
     xnmm_alloc(xnmtx_free, xnmtx_create, &tx->rdtx_count_lock);
     if (mode == XNTXMODE_WR) {
         xn_ensure(xn_mutex_lock(db->wrtx_lock));
-        xn_ensure(xntbl_create(&tx->mod_pgs));
+        xn_ensure(xntbl_create(&tx->mod_pgs, false));
 
         size_t rec_size = xnlog_record_size(0);
         xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, rec_size);
@@ -80,7 +80,7 @@ static xnresult_t xntx_free(struct xntx *tx) {
 
     //XNTXMODE_WR
     xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
-    xn_ensure(xntbl_free(tx->mod_pgs, false));
+    xn_ensure(xntbl_free((void**)&tx->mod_pgs));
     xn_ensure(xnmtx_free((void**)&tx->rdtx_count_lock));
     free(tx);
     return xn_ok();
@@ -101,8 +101,6 @@ xnresult_t xntx_commit(struct xntx *tx) {
     tx->db->committed_wrtx = tx;
 
     xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
-
-    //TODO remaining code should run asynchronously (eg, no more readers in next tbl)
   
     //TODO writing data to disk when 1. next table has no more readers (it will have one writer - this current tx itself.  But this tx is committed already) 
     xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
@@ -125,8 +123,9 @@ xnresult_t xntx_commit(struct xntx *tx) {
     return xn_ok();
 }
 
-xnresult_t xntx_rollback(struct xntx *tx) {
+xnresult_t xntx_rollback(void **t) {
     xnmm_init();
+    struct xntx *tx = (struct xntx*)(*t);
     xn_ensure(xntx_free(tx));
 
     return xn_ok();

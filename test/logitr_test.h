@@ -5,18 +5,18 @@
 
 void logitr_create_on_empty_log() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
     
     struct xnlogitr *itr;
     assert(xnlogitr_create(log, &itr));
     assert(xnlogitr_free(itr));
 
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void logitr_create_on_nonempty_log() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
 
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf = malloc(rec_size);
@@ -37,12 +37,12 @@ void logitr_create_on_nonempty_log() {
     assert(xnlogitr_free(itr));
 
     free(buf);
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void logitr_iterate_from_beginning() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
 
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf = malloc(rec_size);
@@ -72,12 +72,12 @@ void logitr_iterate_from_beginning() {
     assert(xnlogitr_free(itr));
 
     free(buf);
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void logitr_iterate_from_seek() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
 
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf = malloc(rec_size);
@@ -120,7 +120,7 @@ void logitr_iterate_from_seek() {
     assert(xnlogitr_free(itr));
 
     free(buf);
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void logitr_tests() {

@@ -22,7 +22,7 @@ void *fcn(void *arg) {
 
     if (i % 2 == 0) {
         struct xntx *tx;
-        if (!xntx_create(db, XNTXMODE_WR, &tx))
+        if (!xntx_create(&tx, db, XNTXMODE_WR))
             return result;
 
         struct xnpg page;
@@ -34,7 +34,7 @@ void *fcn(void *arg) {
             return result;
     } else {
         struct xntx *tx;
-        if (!xntx_create(db, XNTXMODE_RD, &tx))
+        if (!xntx_create(&tx, db, XNTXMODE_RD))
             return result;
         struct xnpg page = { .file_handle = tx->db->file_handle, .idx = 0 };
 
@@ -42,7 +42,7 @@ void *fcn(void *arg) {
         if (!xnpg_read(&page, tx, buf, 0, XNPG_SZ))
             return result;
         free(buf);
-        if (!xntx_rollback(tx)) //TODO should have to call free or close to close tx rather than commit/rollback
+        if (!xntx_rollback((void**)&tx)) //TODO should have to call free or close to close tx rather than commit/rollback
             return result;
     }
 

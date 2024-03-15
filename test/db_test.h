@@ -15,7 +15,7 @@ void db_recover() {
         struct xndb *db;
         assert(xndb_create("dummy", true, &db));
         struct xntx *tx;
-        assert(xntx_create(db, XNTXMODE_WR, &tx));
+        assert(xntx_create(&tx, db, XNTXMODE_WR));
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         struct xnpg page;
         for (int i = 0; i < 3; i++) {

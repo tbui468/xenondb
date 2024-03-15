@@ -22,7 +22,7 @@ struct xntx {
 };
 
 
-xnresult_t xntx_create(struct xndb *db, enum xntxmode mode, struct xntx **out_tx);
+xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode);
 xnresult_t xntx_flush_writes(struct xntx *tx);
 xnresult_t xntx_commit(struct xntx *tx);
-xnresult_t xntx_rollback(struct xntx *tx);
+xnresult_t xntx_rollback(void **t);

@@ -7,21 +7,21 @@ void table_create_free() {
     //free emptytable with regular buffers
     {
         struct xntbl *tbl;
-        assert(xntbl_create(&tbl));
-        assert(xntbl_free(tbl, false));
+        assert(xntbl_create(&tbl, false));
+        assert(xntbl_free((void**)&tbl));
     }
 
     //free empty table with mmapped pointers
     {
         struct xntbl *tbl;
-        assert(xntbl_create(&tbl));
-        assert(xntbl_free(tbl, true));
+        assert(xntbl_create(&tbl, true));
+        assert(xntbl_free((void**)&tbl));
     }
 }
 
 void table_insert_buffer() {
     struct xntbl *tbl;
-    assert(xntbl_create(&tbl));
+    assert(xntbl_create(&tbl, false));
     struct xnfile *handle;
     assert(xnfile_create(&handle, "dummy", true, false));
 
@@ -29,14 +29,14 @@ void table_insert_buffer() {
     struct xnpg page = { .file_handle = handle, .idx = 0 };
 
     assert(xntbl_insert(tbl, &page, buf));
-    assert(xntbl_free(tbl, false));
+    assert(xntbl_free((void**)&tbl));
 
     assert(xnfile_close((void**)&handle));
 }
 
 void table_find_buffer() {
     struct xntbl *tbl;
-    assert(xntbl_create(&tbl));
+    assert(xntbl_create(&tbl, false));
     struct xnfile *handle;
     assert(xnfile_create(&handle, "dummy", true, false));
 
@@ -58,14 +58,14 @@ void table_find_buffer() {
         assert(strcmp(value, msg) == 0);
     }
 
-    assert(xntbl_free(tbl, false));
+    assert(xntbl_free((void**)&tbl));
 
     assert(xnfile_close((void**)&handle));
 }
 
 void table_insert_mmap() {
     struct xntbl *tbl;
-    assert(xntbl_create(&tbl));
+    assert(xntbl_create(&tbl, true));
     struct xnfile *handle;
     assert(xnfile_create(&handle, "dummy", true, false));
     assert(xnfile_set_size(handle, XNPG_SZ));
@@ -83,13 +83,13 @@ void table_insert_mmap() {
     //insert mapped page
     assert(xntbl_insert(tbl, &page, ptr));
 
-    assert(xntbl_free(tbl, true));
+    assert(xntbl_free((void**)&tbl));
     assert(xnfile_close((void**)&handle));
 }
 
 void table_find_mmap() {
     struct xntbl *tbl;
-    assert(xntbl_create(&tbl));
+    assert(xntbl_create(&tbl, true));
     struct xnfile *handle;
     assert(xnfile_create(&handle, "dummy", true, false));
     assert(xnfile_set_size(handle, XNPG_SZ));
@@ -119,7 +119,7 @@ void table_find_mmap() {
         assert(strcmp(value, msg) == 0);
     }
 
-    assert(xntbl_free(tbl, true));
+    assert(xntbl_free((void**)&tbl));
     assert(xnfile_close((void**)&handle));
 }
 

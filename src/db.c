@@ -2,51 +2,55 @@
 #include <stdlib.h>
 #include <string.h>
 
+static xnresult_t xndb_init(struct xndb *db) {
+    xnmm_init();
+
+    struct xntx *tx;
+    xnmm_alloc(xntx_rollback, xntx_create, &tx, db, XNTXMODE_WR);
+
+    //metadata page
+    struct xnpg meta_page = { .file_handle = db->file_handle, .idx = 0 };
+
+    //zero out page
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
+    uint8_t *buf = (uint8_t*)scoped_ptr;
+    memset(buf, 0, XNPG_SZ);
+    xn_ensure(xnpg_write(&meta_page, tx, buf, 0, XNPG_SZ, true));
+
+    //set bit for metadata page to 'used'
+    uint8_t page0_used = 1;
+    xn_ensure(xnpg_write(&meta_page, tx, &page0_used, 0, sizeof(uint8_t), true));
+
+    xn_ensure(xntx_commit(tx));
+
+    return xn_ok();
+}
+
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) {
     xnmm_init();
+
     struct xndb *db;
     xnmm_alloc(xn_free, xn_malloc, (void**)&db, sizeof(struct xndb));
 
+    //initialize locks and protected data
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->wrtx_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->rdtx_count_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->committed_wrtx_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->tx_id_counter_lock);
+    db->rdtx_count = 0;
+    db->committed_wrtx = NULL;
+    db->tx_id_counter = 1;
 
-    //Use xnalloc
-    xn_ensure(xnlog_create("log", create, &db->log));
+    xnmm_alloc(xnlog_free, xnlog_create, &db->log, "log", create);
 
     xnmm_alloc(xnfile_close, xnfile_create, &db->file_handle, dir_path, create, false);
     xn_ensure(xnfile_set_size(db->file_handle, XNPG_SZ * 32));
 
-    //Use xnalloc
-    xn_ensure(xntbl_create(&db->pg_tbl));
-
-    db->committed_wrtx = NULL;
-    db->rdtx_count = 0;
-
-    db->tx_id_counter = 1;
+    xnmm_alloc(xntbl_free, xntbl_create, &db->pg_tbl, true);
 
     //read in metadata page and set bitmap if new database
     if (create) {
-        struct xntx *tx; //TODO this should be a scoped ptr with tx_rollback if failure
-        xn_ensure(xntx_create(db, XNTXMODE_WR, &tx));
-
-        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
-        uint8_t *buf = (uint8_t*)scoped_ptr;
-
-        memset(buf, 0, XNPG_SZ);
-        struct xnpg page = { .file_handle = db->file_handle, .idx = 0 };
-        xn_ensure(xnpg_write(&page, tx, buf, 0, XNPG_SZ, true));
-        uint8_t byte = 1;
-        //xn_ensure(xnfile_read(db->file_handle, &buf, 0, sizeof(uint8_t)));
-        //uint8_t hdr_bit = 1;
-        //byte |= 1;
-        xn_ensure(xnpg_write(&page, tx, &byte, 0, sizeof(uint8_t), true));
-        //xn_ensure(xnfile_write(db->file_handle, &buf, 0, sizeof(uint8_t)));
-        //xn_ensure(xnfile_sync(db->file_handle));
-
-        xn_ensure(xntx_flush_writes(tx));
-        xn_ensure(xntx_commit(tx));
+        xn_ensure(xndb_init(db));
     }
 
 
@@ -63,7 +67,7 @@ xnresult_t xndb_free(struct xndb *db) {
     xn_ensure(xnmtx_free((void**)&db->committed_wrtx_lock));
     xn_ensure(xnmtx_free((void**)&db->tx_id_counter_lock));
     xn_ensure(xnfile_close((void**)&db->file_handle));
-    xn_ensure(xntbl_free(db->pg_tbl, true));
+    xn_ensure(xntbl_free((void**)&db->pg_tbl));
     free(db);
     return xn_ok();
 }
@@ -73,7 +77,7 @@ xnresult_t xndb_free(struct xndb *db) {
 static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id) {
     xnmm_init();
     struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(db->log, &itr));
+    xn_ensure(xnlogitr_create(db->log, &itr)); //scoped
     xn_ensure(xnlogitr_seek(itr, page_idx, page_off));
     bool valid = true;
     while (true) {
@@ -91,7 +95,7 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
             uint8_t *buf = (uint8_t*)scoped_ptr;
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
-            //writing changes back to file (not the log)
+            //writing changes back to file (but not logging)
             struct xnpg page = { .file_handle = tx->db->file_handle, .idx = *((uint64_t*)buf) };
             size_t data_hdr_size = sizeof(uint64_t) + sizeof(int);
             int off = *((int*)(buf + sizeof(uint64_t)));
@@ -106,9 +110,9 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
 xnresult_t xndb_recover(struct xndb *db) {
     xnmm_init();
     struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(db->log, &itr));
+    xn_ensure(xnlogitr_create(db->log, &itr)); //scoped
     struct xntx *tx;
-    xn_ensure(xntx_create(db, XNTXMODE_WR, &tx));
+    xn_ensure(xntx_create(&tx, db, XNTXMODE_WR)); //TODO not scoped, but xntx_rollback for any failures
 
     uint64_t start_pageidx;
     int start_pageoff;
@@ -132,7 +136,6 @@ xnresult_t xndb_recover(struct xndb *db) {
     }
 
     xn_ensure(xnlogitr_free(itr));
-    xn_ensure(xntx_flush_writes(tx));
-    xn_ensure(xntx_commit(tx));
+    xn_ensure(xntx_commit(tx)); //TODO xn_ensure will cause tx to rollback IF commit fails
     return xn_ok();
 }

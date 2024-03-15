@@ -3,24 +3,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-xnresult_t xntbl_create(struct xntbl **out_tbl) {
+xnresult_t xntbl_create(struct xntbl **out_tbl, bool mapped) {
     xnmm_init();
     struct xntbl *tbl;
     xn_ensure(xn_malloc((void**)&tbl, sizeof(struct xntbl)));
     xn_ensure(xn_malloc((void**)&tbl->entries, sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS));
     memset(tbl->entries, 0, sizeof(struct xnentry*) * XNTBL_MAX_BUCKETS);
+    tbl->mapped = mapped;
 
     *out_tbl = tbl;
     return xn_ok();
 }
 
-xnresult_t xntbl_free(struct xntbl *tbl, bool unmap) {
+xnresult_t xntbl_free(void **t) {
     xnmm_init();
+    struct xntbl* tbl = (struct xntbl*)(*t);
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tbl->entries[i];
         while (cur) {
             struct xnentry *next = cur->next;
-            if (unmap) {
+            if (tbl->mapped) {
                 xn_ensure(xnpg_munmap(cur->val));
             } else {
                 free(cur->val);

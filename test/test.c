@@ -28,8 +28,8 @@ int main() {
     log_tests();
     logitr_tests();
     db_tests();
-    multithreading_tests();
     paging_tests();
+    multithreading_tests();
     
     int passed_count = 0;
     

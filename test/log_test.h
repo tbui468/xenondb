@@ -5,8 +5,8 @@
 
 void log_create_free() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
-    assert(xnlog_free(log));
+    assert(xnlog_create(&log, "dummy", true));
+    assert(xnlog_free((void**)&log));
 }
 
 void log_make_nonupdate_record() {
@@ -29,7 +29,7 @@ void log_make_update_record() {
 
 void log_append_record() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
 
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
@@ -44,12 +44,12 @@ void log_append_record() {
     assert(xnlog_append(log, buf, rec_size));
     assert(log->page_off == 2 * rec_size);
 
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void log_append_record_overflow() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf = malloc(rec_size);
@@ -65,12 +65,12 @@ void log_append_record_overflow() {
     assert((recs * rec_size) % XNPG_SZ == log->page_off);
 
     free(buf);
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void log_flush_buffer() {
     struct xnlog *log;
-    assert(xnlog_create("dummy", true, &log));
+    assert(xnlog_create(&log, "dummy", true));
     //make dummy record
     size_t rec_size = xnlog_record_size(0);
     uint8_t *buf = malloc(rec_size);
@@ -102,7 +102,7 @@ void log_flush_buffer() {
     assert(xnfile_close((void**)&handle));
 
     free(buf);
-    assert(xnlog_free(log));
+    assert(xnlog_free((void**)&log));
 }
 
 void log_tests() {

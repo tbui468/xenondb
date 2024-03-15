@@ -7,7 +7,7 @@ void paging_allocate_page() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
     struct xntx *tx;
-    assert(xntx_create(db, XNTXMODE_WR, &tx));
+    assert(xntx_create(&tx, db, XNTXMODE_WR));
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
     struct xnpg page;
     for (int i = 0; i < 2; i++) {
@@ -34,7 +34,7 @@ void paging_free_page() {
     //allocate 2 pages
     {
         struct xntx *tx;
-        assert(xntx_create(db, XNTXMODE_WR, &tx));
+        assert(xntx_create(&tx, db, XNTXMODE_WR));
         for (int i = 0; i < 2; i++) {
             assert(xnpgr_allocate_page(&meta_page, tx, &page));
         }
@@ -43,7 +43,7 @@ void paging_free_page() {
     //free one page
     {
         struct xntx *tx;
-        assert(xntx_create(db, XNTXMODE_WR, &tx));
+        assert(xntx_create(&tx, db, XNTXMODE_WR));
         assert(xnpgr_free_page(&meta_page, tx, page));
         assert(xntx_commit(tx));
     }
@@ -64,7 +64,7 @@ void paging_insufficient_file_size() {
     assert(xndb_create("dummy", true, &db));
 
     struct xntx *tx;
-    assert(xntx_create(db, XNTXMODE_WR, &tx));
+    assert(xntx_create(&tx, db, XNTXMODE_WR));
 
     struct xnpg meta_page = {.file_handle = db->file_handle, .idx = 0 };
     struct xnpg page;
@@ -88,9 +88,9 @@ void paging_free_invalid_page() {
     //attempt to free non-allocated page
     {
         struct xntx *tx;
-        assert(xntx_create(db, XNTXMODE_WR, &tx));
+        assert(xntx_create(&tx, db, XNTXMODE_WR));
         assert(xnpgr_free_page(&meta_page, tx, page) == false);
-        assert(xntx_rollback(tx));
+        assert(xntx_rollback((void**)&tx));
     }
     assert(xndb_free(db));
 }

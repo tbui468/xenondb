@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_log) {
+xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool create) {
     xnmm_init();
     struct xnlog *log;
     xn_ensure(xn_malloc((void**)&log, sizeof(struct xnlog)));
@@ -31,8 +31,9 @@ xnresult_t xnlog_create(const char *log_path, bool create, struct xnlog **out_lo
 }
 
 
-xnresult_t xnlog_free(struct xnlog *log) {
+xnresult_t xnlog_free(void **l) {
     xnmm_init();
+    struct xnlog *log = (struct xnlog*)(*l);
     xn_ensure(xnfile_close((void**)&log->page.file_handle));
     free(log->buf);
     free(log);
