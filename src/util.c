@@ -68,23 +68,6 @@ xnresult_t xn_cond_wait(pthread_cond_t *cv, pthread_mutex_t *lock) {
     return xn_ok();
 }
 
-xnresult_t xn_mutex_init(pthread_mutex_t *lock) {
-    xnmm_init();
-    xn_ensure(pthread_mutex_init(lock, NULL) == 0);
-    return xn_ok();
-}
-
-xnresult_t xn_mutex_destroy(pthread_mutex_t *lock) {
-    xnmm_init();
-    xn_ensure(pthread_mutex_destroy(lock) == 0);
-    return xn_ok();
-}
-
-xnresult_t xn_mutex_destroy_new(void **lock) {
-    pthread_mutex_t *l = (pthread_mutex_t*)(*lock);
-    return pthread_mutex_destroy(l) == 0;
-}
-
 xnresult_t xn_atomic_increment(int *i, pthread_mutex_t *lock) {
     xnmm_init();
     xn_ensure(xn_mutex_lock(lock));
