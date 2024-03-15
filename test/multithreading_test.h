@@ -42,7 +42,7 @@ void *fcn(void *arg) {
         if (!xnpg_read(&page, tx, buf, 0, XNPG_SZ))
             return result;
         free(buf);
-        if (!xntx_rollback((void**)&tx)) //TODO should have to call free or close to close tx rather than commit/rollback
+        if (!xntx_close((void**)&tx))
             return result;
     }
 

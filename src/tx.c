@@ -66,22 +66,31 @@ xnresult_t xntx_flush_writes(struct xntx *tx) {
     return xn_ok();
 }
 
+//called by xntx_commit and xntx_rollback to free write txs
 static xnresult_t xntx_free(struct xntx *tx) {
     xnmm_init();
-    if (tx->mode == XNTXMODE_RD) {
-        if (tx->mod_pgs) {
-            xn_ensure(xn_atomic_decrement_and_signal(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
-        } else {
-            xn_ensure(xn_atomic_decrement_and_signal(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
-        }
-        free(tx);
-        return xn_ok();
-    }
 
-    //XNTXMODE_WR
+    xn_ensure(tx->mode == XNTXMODE_WR);
+
     xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
     xn_ensure(xntbl_free((void**)&tx->mod_pgs));
     xn_ensure(xnmtx_free((void**)&tx->rdtx_count_lock));
+    free(tx);
+
+    return xn_ok();
+}
+
+//close and free read txs
+xnresult_t xntx_close(void **t) {
+    xnmm_init();
+    struct xntx *tx = (struct xntx*)(*t);
+    xn_ensure(tx->mode == XNTXMODE_RD);
+
+    if (tx->mod_pgs) {
+        xn_ensure(xn_atomic_decrement_and_signal(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
+    } else {
+        xn_ensure(xn_atomic_decrement_and_signal(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
+    }
     free(tx);
     return xn_ok();
 }
