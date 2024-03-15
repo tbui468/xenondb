@@ -42,7 +42,7 @@ xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, in
     uint8_t *cpy;
 
     if (!(cpy = xntbl_find(tx->mod_pgs, page))) {
-        xn_ensure(xn_malloc((void**)&cpy, XNPG_SZ));
+        xnmm_alloc(xn_free, xn_malloc, (void**)&cpy, XNPG_SZ);
         xn_ensure(xnpg_copy(page, cpy));
         xn_ensure(xntbl_insert(tx->mod_pgs, page, cpy));
     }

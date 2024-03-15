@@ -5,23 +5,26 @@
 
 xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool create) {
     xnmm_init();
+
     struct xnlog *log;
-    xn_ensure(xn_malloc((void**)&log, sizeof(struct xnlog)));
+    xnmm_alloc(xn_free, xn_malloc, (void**)&log, sizeof(struct xnlog));
 
-    xn_ensure(xnfile_create(&log->page.file_handle, log_path, create, true));
-    xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ)); //TODO temporary size - will need to add code to resize file if needed
+    xnmm_alloc(xnfile_close, xnfile_create, &log->page.file_handle, log_path, create, true);
+    //TODO arbitrary log size of 32 pages - should choose this more carefully
+    xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ));
 
-    //make iterator here to get last record offset
-    struct xnlogitr *itr;
-    xn_ensure(xnlogitr_create(&itr, log));
-    bool valid = true;
-    while (valid)
-        xn_ensure(xnlogitr_next(itr, &valid));
-    log->page.idx = itr->page.idx;
-    log->page_off = itr->page_off;
-    xn_ensure(xnlogitr_free((void**)&itr));
+    //find end of the log
+    {
+        xnmm_scoped_alloc(scoped_ptr, xnlogitr_free, xnlogitr_create, (struct xnlogitr**)&scoped_ptr, log);
+        struct xnlogitr *itr = (struct xnlogitr*)scoped_ptr;
+        bool valid = true;
+        while (valid)
+            xn_ensure(xnlogitr_next(itr, &valid));
+        log->page.idx = itr->page.idx;
+        log->page_off = itr->page_off;
+    }
 
-    xn_ensure(xn_aligned_malloc((void**)&log->buf, XNPG_SZ));
+    xnmm_alloc(xn_free, xn_aligned_malloc, (void**)&log->buf, XNPG_SZ);
     xn_ensure(xnpg_copy(&log->page, log->buf));
     
     log->highest_tx_flushed = -1;
@@ -105,8 +108,9 @@ xnresult_t xnlog_serialize_record(int tx_id,
 xnresult_t xnlogitr_create(struct xnlogitr **out_itr, struct xnlog *log) {
     xnmm_init();
     struct xnlogitr *itr;
-    xn_ensure(xn_malloc((void**)&itr, sizeof(struct xnlogitr)));
-    xn_ensure(xn_aligned_malloc((void**)&itr->buf, XNPG_SZ));
+    xnmm_alloc(xn_free, xn_malloc, (void**)&itr, sizeof(struct xnlogitr));
+    xnmm_alloc(xn_free, xn_aligned_malloc, (void**)&itr->buf, XNPG_SZ);
+
     itr->page = log->page;
     itr->page.idx = 0;
     itr->page_off = -1;

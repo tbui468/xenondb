@@ -12,7 +12,7 @@ pthread_cond_t mem_rdtxs_cv = PTHREAD_COND_INITIALIZER;
 xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode) {
     xnmm_init();
     struct xntx *tx;
-    xn_ensure(xn_malloc((void**)&tx, sizeof(struct xntx)));
+    xnmm_alloc(xn_free, xn_malloc, (void**)&tx, sizeof(struct xntx));
 
     xn_ensure(xn_mutex_lock(db->tx_id_counter_lock));
     tx->id = db->tx_id_counter++;
@@ -22,8 +22,8 @@ xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode
     tx->rdtx_count = 0;
     xnmm_alloc(xnmtx_free, xnmtx_create, &tx->rdtx_count_lock);
     if (mode == XNTXMODE_WR) {
-        xn_ensure(xn_mutex_lock(db->wrtx_lock));
-        xn_ensure(xntbl_create(&tx->mod_pgs, false));
+        xn_ensure(xn_mutex_lock(db->wrtx_lock)); //TODO need to unlock if function fails - putting responsibility on caller is confusing and to complex
+        xnmm_alloc(xntbl_free, xntbl_create, &tx->mod_pgs, false);
 
         size_t rec_size = xnlog_record_size(0);
         xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, rec_size);
@@ -32,7 +32,7 @@ xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_START, 0, NULL, rec));
         xn_ensure(xnlog_append(db->log, rec, rec_size));
     } else { //XNTXMODE_RD
-        xn_ensure(xn_mutex_lock(db->committed_wrtx_lock));
+        xn_ensure(xn_mutex_lock(db->committed_wrtx_lock)); //TODO need to unlock if function fails
         if (db->committed_wrtx) {
             tx->mod_pgs = db->committed_wrtx->mod_pgs;
             xn_ensure(xn_atomic_increment(&tx->rdtx_count, tx->rdtx_count_lock));
@@ -90,7 +90,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xnmm_init();
     xn_ensure(tx->mode == XNTXMODE_WR);
 
-    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
 
     size_t rec_size = xnlog_record_size(0);
     xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, rec_size);
@@ -107,7 +107,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xn_ensure(xnlog_flush(tx->db->log));
     xn_ensure(xntx_flush_writes(tx));
 
-    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock));
+    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
     tx->db->committed_wrtx = NULL;
     xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
 

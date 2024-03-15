@@ -29,8 +29,9 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
 
 xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool create, bool direct) {
     xnmm_init();
+
     struct xnfile *handle;
-    xn_ensure(xn_malloc((void**)&handle, sizeof(struct xnfile)));
+    xnmm_alloc(xn_free, xn_malloc, (void**)&handle, sizeof(struct xnfile));
 
     int flags = O_RDWR;
     if (create) {
@@ -41,12 +42,15 @@ xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool c
         flags |= O_DSYNC;
     }
 
-    //TODO if an error occurs after this line, need to free handle - how can we do this in a readable way?
+    //closing file immediately in case of failures in following function calls.
+    //reopening fd at the end of this function.  Not the best way to deal with
+    //closing a fd on failure, but it works for now
     xn_ensure(xn_open(relpath, flags, S_IRUSR | S_IWUSR, &handle->fd));
+    xn_ensure(close(handle->fd) == 0);
 
     char buf[PATH_MAX];
     xn_ensure(xn_realpath(relpath, buf));
-    xn_ensure(xn_malloc((void**)&handle->path, strlen(buf) + 1));
+    xnmm_alloc(xn_free, xn_malloc, (void**)&handle->path, strlen(buf) + 1);
     strcpy(handle->path, buf);
 
     struct stat s;
@@ -58,6 +62,8 @@ xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool c
     if (handle->size == 0) {
         xn_ensure(xnfile_sync_parent(buf));
     }
+
+    xn_ensure(xn_open(relpath, flags, S_IRUSR | S_IWUSR, &handle->fd));
 
     *out_handle = handle;
     return xn_ok();
@@ -142,6 +148,7 @@ xnresult_t xnfile_munmap(void *addr, size_t len) {
     return xn_ok();
 }
 
+//grow file size by 20%, rounded up to the nearest page
 xnresult_t xnfile_grow(struct xnfile *handle) {
     xnmm_init();
     size_t new_size = ceil((handle->size * 1.2f) / XNPG_SZ) * XNPG_SZ;
