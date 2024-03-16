@@ -35,7 +35,7 @@ xnresult_t xntx_create(struct xntx **out_tx, struct xndb *db, enum xntxmode mode
         xn_ensure(xn_mutex_lock(db->committed_wrtx_lock)); //TODO need to unlock if function fails
         if (db->committed_wrtx) {
             tx->mod_pgs = db->committed_wrtx->mod_pgs;
-            xn_ensure(xn_atomic_increment(&tx->rdtx_count, tx->rdtx_count_lock));
+            xn_ensure(xn_atomic_increment(&db->committed_wrtx->rdtx_count, db->committed_wrtx->rdtx_count_lock));
         } else {
             tx->mod_pgs = NULL;
             xn_ensure(xn_atomic_increment(&db->rdtx_count, db->rdtx_count_lock));
@@ -87,7 +87,7 @@ xnresult_t xntx_close(void **t) {
     xn_ensure(tx->mode == XNTXMODE_RD);
 
     if (tx->mod_pgs) {
-        xn_ensure(xn_atomic_decrement_and_signal(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
+        xn_ensure(xn_atomic_decrement_and_signal(&tx->db->committed_wrtx->rdtx_count, tx->db->committed_wrtx->rdtx_count_lock, &mem_rdtxs_cv));
     } else {
         xn_ensure(xn_atomic_decrement_and_signal(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
     }
@@ -99,34 +99,37 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xnmm_init();
     xn_ensure(tx->mode == XNTXMODE_WR);
 
-    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
+    //append commit log
+    {
+        xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
 
-    size_t rec_size = xnlog_record_size(0);
-    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, rec_size);
-    uint8_t *rec = (uint8_t*)scoped_ptr;
+        size_t rec_size = xnlog_record_size(0);
+        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, rec_size);
+        uint8_t *rec = (uint8_t*)scoped_ptr;
 
-    xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));
-    xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
-    tx->db->committed_wrtx = tx;
+        xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));
+        xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
+        tx->db->committed_wrtx = tx;
 
-    xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
+        xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
+    }
   
-    //TODO writing data to disk when 1. next table has no more readers (it will have one writer - this current tx itself.  But this tx is committed already) 
-    xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
-    xn_ensure(xnlog_flush(tx->db->log));
-    xn_ensure(xntx_flush_writes(tx));
+    //write to disk when there are no more downstream reader txs
+    {
+        xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
+        xn_ensure(xnlog_flush(tx->db->log));
+        xn_ensure(xntx_flush_writes(tx));
+    }
 
-    xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
-    tx->db->committed_wrtx = NULL;
-    xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
+    //free tx when there are no more readers referencing its page page
+    {
+        xn_ensure(xn_wait_until_zero(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
+        xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
+        tx->db->committed_wrtx = NULL;
+        xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
 
-    //TODO page table should be freed when no more readers and writer txs are reading from this page table
-
-    //TODO freeing this table should only occur when 1. no more readers and 2. no more writer (up to one writer) referencing it
-    xn_ensure(xn_wait_until_zero(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
-    //TODO xntx_free is releasing the write lock - this can occur right after this tx commits (tx->db->committed_wrtx = tx)
-    //If a new write tx starts, it will prevent this write transaction from being freed
-    xn_ensure(xntx_free(tx));
+        xn_ensure(xntx_free(tx));
+    }
 
 
     return xn_ok();

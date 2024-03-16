@@ -9,9 +9,9 @@
 #include "log_test.h"
 #include "logitr_test.h"
 #include "db_test.h"
-#include "multithreading_test.h"
 #include "paging_test.h"
 #include "memory_test.h"
+#include "tx_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -29,7 +29,7 @@ int main() {
     logitr_tests();
     db_tests();
     paging_tests();
-    multithreading_tests();
+    tx_tests();
     
     int passed_count = 0;
     
