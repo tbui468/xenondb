@@ -72,7 +72,6 @@ static xnresult_t xntx_free(struct xntx *tx) {
 
     xn_ensure(tx->mode == XNTXMODE_WR);
 
-    xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
     xn_ensure(xntbl_free((void**)&tx->mod_pgs));
     xn_ensure(xnmtx_free((void**)&tx->rdtx_count_lock));
     free(tx);
@@ -99,7 +98,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
     xnmm_init();
     xn_ensure(tx->mode == XNTXMODE_WR);
 
-    //append commit log
+    //append commit log record and flush log
     {
         xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
 
@@ -110,27 +109,35 @@ xnresult_t xntx_commit(struct xntx *tx) {
         xn_ensure(xnlog_serialize_record(tx->id, XNLOGT_COMMIT, 0, NULL, rec));
         xn_ensure(xnlog_append(tx->db->log, rec, rec_size));
         tx->db->committed_wrtx = tx;
+        xn_ensure(xnlog_flush(tx->db->log));
 
         xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
     }
+
+    //Single-writer mutex can be unlocked here to improve concurrency, but will make handling overlapping writer txs a bit more complex.
+    //Only a single writer can be modifying data at a time, but this allows writers in the commit/flushed stages to not interfere with
+    //write tx in the writing stage.  Reader txs handling is also more complex since they will reference the most recently committed
+    //writer tx snapshot.
+    //write tx stages: [creating][writing][committed][flushed][gc]
+    //Only the 'writing' stage allows a single write tx - all stages before and after can have multiple write txs active.
   
     //write to disk when there are no more downstream reader txs
     {
         xn_ensure(xn_wait_until_zero(&tx->db->rdtx_count, tx->db->rdtx_count_lock, &disk_rdtxs_cv));
-        xn_ensure(xnlog_flush(tx->db->log));
         xn_ensure(xntx_flush_writes(tx));
     }
 
-    //free tx when there are no more readers referencing its page page
+    //free tx when there are no more upstream readers, and any upstream writer has committed
     {
         xn_ensure(xn_wait_until_zero(&tx->rdtx_count, tx->rdtx_count_lock, &mem_rdtxs_cv));
         xn_ensure(xn_mutex_lock(tx->db->committed_wrtx_lock)); //TODO need to unlock if function fails
         tx->db->committed_wrtx = NULL;
         xn_ensure(xn_mutex_unlock(tx->db->committed_wrtx_lock));
 
+        //unlocking single-writer mutex here to keep things simple for now
+        xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
         xn_ensure(xntx_free(tx));
     }
-
 
     return xn_ok();
 }
@@ -138,6 +145,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
 xnresult_t xntx_rollback(void **t) {
     xnmm_init();
     struct xntx *tx = (struct xntx*)(*t);
+    xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
     xn_ensure(xntx_free(tx));
 
     return xn_ok();

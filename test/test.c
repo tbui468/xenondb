@@ -12,6 +12,7 @@
 #include "paging_test.h"
 #include "memory_test.h"
 #include "tx_test.h"
+#include "wrtx_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -30,6 +31,7 @@ int main() {
     db_tests();
     paging_tests();
     tx_tests();
+    wrtx_tests();
     
     int passed_count = 0;
     

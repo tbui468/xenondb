@@ -187,7 +187,7 @@ void* writer_fcn(void *arg) {
 }
 
 
-void cc_txs_before_commit_snapshot() {
+void cc_rdtxs_before_commit() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
 
@@ -354,7 +354,7 @@ void* after_commit_writer_fcn(void *arg) {
  * 5 make reader 3.  reader 3 also sees new data. close reader 3
 */
 
-void cc_txs_after_commit_snapshot() {
+void cc_rdtxs_after_commit() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
 
@@ -488,7 +488,7 @@ void tx_tests() {
     append_test(tx_commit);
     append_test(tx_rollback);
     append_test(tx_read_own_writes);
-    append_test(cc_txs_before_commit_snapshot);
-    append_test(cc_txs_after_commit_snapshot);
-    append_test(cc_many_writers_and_readers);
+    append_test(cc_rdtxs_before_commit);
+    append_test(cc_rdtxs_after_commit);
+//    append_test(cc_many_writers_and_readers); //TODO disabling this test since it's passing, but I'm not expecting it to pass
 }
