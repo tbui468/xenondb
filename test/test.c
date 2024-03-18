@@ -14,6 +14,7 @@
 #include "tx_test.h"
 #include "wrtx_test.h"
 #include "container_test.h"
+#include "containeritr_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -34,6 +35,7 @@ int main() {
     tx_tests();
     wrtx_tests();
     container_tests();
+    containeritr_tests();
     
     int passed_count = 0;
     

@@ -141,7 +141,7 @@ xnresult_t xnctn_get_size(struct xnctn *ctn, struct xnitemid id, size_t *size) {
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
     xn_ensure(id.arr_idx < item_count);
 
-    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t);
+    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t); //TODO: change to uint32_t
     uint32_t ptr;
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
 
@@ -164,7 +164,7 @@ xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id) {
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
     xn_ensure(id.arr_idx < item_count);
 
-    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t);
+    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t); //TODO change to uint32_t
     uint32_t ptr;
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
 
@@ -177,5 +177,62 @@ xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id) {
     uint32_t new_ptr = xnctn_set_ptr_fields(0, data_size, data_off);
     xn_ensure(xnpg_write(&ctn->pg, ctn->tx, (uint8_t*)&new_ptr , ptr_off, sizeof(uint32_t), true));
 
+    return xn_ok();
+}
+
+
+xnresult_t xnctnitr_create(struct xnctnitr **out_itr, struct xnctn* ctn) {
+    xnmm_init();
+
+    struct xnctnitr *itr;
+    xnmm_alloc(xn_free, xn_malloc, (void**)&itr, sizeof(struct xnctnitr));
+    itr->ctn = ctn;
+    itr->idx = -1;
+
+    *out_itr = itr;
+
+    return xn_ok();
+}
+
+xnresult_t xnctnitr_free(void **i) {
+    xnmm_init();
+    free(*i);
+    return xn_ok();
+}
+
+xnresult_t xnctnitr_next(struct xnctnitr *itr, bool *valid) {
+    xnmm_init();
+
+    uint16_t item_count;
+    xn_ensure(xnpg_read(&itr->ctn->pg, itr->ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
+
+    while (true) {
+        itr->idx++;
+        if (itr->idx >= item_count) {
+            *valid = false;
+            return xn_ok();
+        }
+
+        //check if valid, if so, break
+        off_t ptr_off = XNCTN_HDR_SZ + itr->idx * sizeof(uint32_t);
+        uint32_t ptr;
+        xn_ensure(xnpg_read(&itr->ctn->pg, itr->ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
+
+        uint32_t used;
+        uint32_t data_size;
+        uint32_t data_off;
+        xnctn_get_ptr_fields(ptr, &used, &data_size, &data_off);
+        if (used == 1)
+            break;
+    }
+
+    *valid = true;
+    return xn_ok();
+}
+
+xnresult_t xnctnitr_itemid(struct xnctnitr *itr, struct xnitemid *id) {
+    xnmm_init();
+    id->pg_idx = itr->ctn->pg.idx;
+    id->arr_idx = itr->idx;
     return xn_ok();
 }
