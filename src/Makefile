@@ -7,6 +7,6 @@ remove_o: create_lib
 create_lib: compile
 	ar -rcs libxenondb.a *.o
 
-compile: util.h util.c file.h file.c log.h log.c page.h page.c table.c table.h tx.h tx.c db.h db.c
-	gcc -std=c11 -c file.c util.c log.c page.c table.c tx.c db.c -pthread -g
+compile: util.h util.c file.h file.c log.h log.c page.h page.c table.c table.h tx.h tx.c db.h db.c container.h container.c
+	gcc -std=c11 -c file.c util.c log.c page.c table.c tx.c db.c container.c -pthread -g
 

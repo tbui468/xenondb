@@ -13,6 +13,7 @@
 #include "memory_test.h"
 #include "tx_test.h"
 #include "wrtx_test.h"
+#include "container_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -32,6 +33,7 @@ int main() {
     paging_tests();
     tx_tests();
     wrtx_tests();
+    container_tests();
     
     int passed_count = 0;
     
