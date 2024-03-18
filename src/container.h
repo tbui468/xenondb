@@ -23,3 +23,5 @@ xnresult_t xnctn_can_fit(struct xnctn *ctn, size_t size, bool *result);
 
 xnresult_t xnctn_insert(struct xnctn *ctn, const uint8_t *buf, size_t size, struct xnitemid *out_id);
 xnresult_t xnctn_get(struct xnctn *ctn, struct xnitemid id, uint8_t *buf, size_t size);
+xnresult_t xnctn_get_size(struct xnctn *ctn, struct xnitemid id, size_t *size);
+xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id);

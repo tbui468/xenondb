@@ -102,7 +102,7 @@ xnresult_t xnctn_insert(struct xnctn *ctn, const uint8_t *buf, size_t size, stru
     return xn_ok();
 }
 
-
+//will fail if id doesn't belong to a valid data entry
 xnresult_t xnctn_get(struct xnctn *ctn, struct xnitemid id, uint8_t *buf, size_t size) {
     xnmm_init();
 
@@ -121,6 +121,7 @@ xnresult_t xnctn_get(struct xnctn *ctn, struct xnitemid id, uint8_t *buf, size_t
     uint32_t data_size;
     uint32_t data_off;
     xnctn_get_ptr_fields(ptr, &used, &data_size, &data_off);
+    xn_ensure(used == 1);
 
     xn_ensure(size == data_size);
 
@@ -129,3 +130,52 @@ xnresult_t xnctn_get(struct xnctn *ctn, struct xnitemid id, uint8_t *buf, size_t
     return xn_ok();
 }
 
+
+xnresult_t xnctn_get_size(struct xnctn *ctn, struct xnitemid id, size_t *size) {
+    xnmm_init();
+
+    xn_ensure(ctn->pg.idx == id.pg_idx);
+
+    //read container metadata
+    uint16_t item_count;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
+    xn_ensure(id.arr_idx < item_count);
+
+    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t);
+    uint32_t ptr;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
+
+    uint32_t used;
+    uint32_t data_size;
+    uint32_t data_off;
+    xnctn_get_ptr_fields(ptr, &used, &data_size, &data_off);
+    *size = data_size;
+
+    return xn_ok();
+}
+
+xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id) {
+    xnmm_init();
+
+    xn_ensure(ctn->pg.idx == id.pg_idx);
+
+    //read container metadata
+    uint16_t item_count;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
+    xn_ensure(id.arr_idx < item_count);
+
+    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t);
+    uint32_t ptr;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
+
+    uint32_t used;
+    uint32_t data_size;
+    uint32_t data_off;
+    xnctn_get_ptr_fields(ptr, &used, &data_size, &data_off);
+    xn_ensure(used == 1);
+
+    uint32_t new_ptr = xnctn_set_ptr_fields(0, data_size, data_off);
+    xn_ensure(xnpg_write(&ctn->pg, ctn->tx, (uint8_t*)&new_ptr , ptr_off, sizeof(uint32_t), true));
+
+    return xn_ok();
+}
