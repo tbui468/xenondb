@@ -51,6 +51,7 @@ bool xn_aligned_malloc(void **ptr, size_t size);
 
 xnresult_t xn_realpath(const char *path, char *out);
 xnresult_t xn_stat(const char *path, struct stat *s);
+xnresult_t xn_mkdir(const char *path, mode_t mode);
 xnresult_t xn_open(const char *path, int flags, mode_t mode, int *out_fd);
 xnresult_t xn_mutex_lock(pthread_mutex_t *lock);
 xnresult_t xn_mutex_unlock(pthread_mutex_t *lock);

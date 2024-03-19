@@ -8,4 +8,4 @@ example: main.c libxenondb.a
 	gcc main.c -L. -lxenondb -I./../src -o main
 
 clean:
-	rm students log main dummy
+	rm -rf students log main dummy

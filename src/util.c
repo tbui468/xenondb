@@ -44,6 +44,12 @@ xnresult_t xn_open(const char *path, int flags, mode_t mode, int *out_fd) {
     return xn_ok();
 }
 
+xnresult_t xn_mkdir(const char *path, mode_t mode) {
+    xnmm_init();
+    xn_ensure(mkdir(path, mode) == 0);
+    return xn_ok();
+}
+
 xnresult_t xn_mutex_lock(pthread_mutex_t *lock) {
     xnmm_init();
     xn_ensure(pthread_mutex_lock(lock) == 0);

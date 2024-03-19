@@ -14,7 +14,7 @@ xnresult_t xnctn_create(struct xnctn **out_ctn, struct xntx *tx, struct xnpg pg)
     return xn_ok();
 }
 
-xnresult_t xnctn_free(void **c) {
+bool xnctn_free(void **c) {
     xnmm_init();
     free(*c);
     return xn_ok();
@@ -74,6 +74,7 @@ xnresult_t xnctn_insert(struct xnctn *ctn, const uint8_t *buf, size_t size, stru
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&floor, sizeof(uint16_t), sizeof(uint16_t)));
     uint16_t ceil;
     xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ceil, sizeof(uint16_t) * 2, sizeof(uint16_t)));
+    xn_ensure(ceil <= XNPG_SZ);
 
     //make sure enough space in container to store data + array pointer
     xn_ensure(ceil - size > floor + sizeof(uint16_t) * 2);
@@ -194,7 +195,7 @@ xnresult_t xnctnitr_create(struct xnctnitr **out_itr, struct xnctn* ctn) {
     return xn_ok();
 }
 
-xnresult_t xnctnitr_free(void **i) {
+bool xnctnitr_free(void **i) {
     xnmm_init();
     free(*i);
     return xn_ok();

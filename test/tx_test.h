@@ -31,7 +31,7 @@ void tx_commit() {
         assert(xntx_create(&tx, db, XNTXMODE_WR));
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         struct xnpg page;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 1; i++) {
             assert(xnpgr_allocate_page(&meta_page, tx, &page));
         }
         assert(xntx_commit(tx));
@@ -58,7 +58,7 @@ void tx_rollback() {
         assert(xntx_create(&tx, db, XNTXMODE_WR));
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         struct xnpg page;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 1; i++) {
             assert(xnpgr_allocate_page(&meta_page, tx, &page));
         }
         assert(xntx_rollback((void**)&tx));
@@ -70,7 +70,7 @@ void tx_rollback() {
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         uint8_t byte;
         assert(xnpg_read(&meta_page, tx, &byte, 0, sizeof(uint8_t)));
-        assert(byte == 1);
+        assert(byte == 3);
         assert(xntx_close((void**)&tx));
     }
     assert(xndb_free(db));
@@ -84,7 +84,7 @@ void tx_read_own_writes() {
         assert(xntx_create(&tx, db, XNTXMODE_WR));
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         struct xnpg page;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 1; i++) {
             assert(xnpgr_allocate_page(&meta_page, tx, &page));
         }
 
@@ -103,7 +103,7 @@ void tx_read_own_writes() {
         struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
         uint8_t byte;
         assert(xnpg_read(&meta_page, tx, &byte, 0, sizeof(uint8_t)));
-        assert(byte == 1);
+        assert(byte == 3);
         assert(xntx_close((void**)&tx));
     }
     assert(xndb_free(db));
@@ -124,7 +124,7 @@ void* reader1_fcn(void *arg) {
     uint8_t byte;
     if (!xnpg_read(&meta_page, tx, &byte, 0, sizeof(uint8_t)))
         return result;
-    if (byte != 1)
+    if (byte != 3)
         return result;
     if (!xntx_close((void**)&tx))
         return result;
@@ -150,7 +150,7 @@ void* reader2_fcn(void *arg) {
     uint8_t byte;
     if (!xnpg_read(&meta_page, tx, &byte, 0, sizeof(uint8_t)))
         return result;
-    if (byte != 1)
+    if (byte != 3)
         return result;
     if (!xntx_close((void**)&tx))
         return result;
@@ -174,7 +174,7 @@ void* writer_fcn(void *arg) {
 
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
     struct xnpg page;
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 1; i++) {
         if (!xnpgr_allocate_page(&meta_page, tx, &page))
             return result;
     }
@@ -246,7 +246,7 @@ void* after_commit_reader1_fcn(void *arg) {
     uint8_t byte;
     if (!xnpg_read(&meta_page, tx, &byte, 0, sizeof(uint8_t)))
         return result;
-    if (byte != 1)
+    if (byte != 3)
         return result;
 
     usleep(100000);
@@ -332,7 +332,7 @@ void* after_commit_writer_fcn(void *arg) {
 
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
     struct xnpg page;
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 1; i++) {
         if (!xnpgr_allocate_page(&meta_page, tx, &page))
             return result;
     }

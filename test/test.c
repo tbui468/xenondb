@@ -21,6 +21,9 @@ void append_test(void (*fcn)(void)) {
 }
 
 int main() {
+    //TODO commenting this out causes some messages to show up
+    //when running some tests.  Are these stack traces from errors in 
+    //the program?
     freopen("/dev/null", "w", stderr); //ignoring stderr
 
     util_tests();
@@ -30,17 +33,17 @@ int main() {
     table_tests();
     log_tests();
     logitr_tests();
-    db_tests();
     paging_tests();
     tx_tests();
     wrtx_tests();
     container_tests();
     containeritr_tests();
+    db_tests();
     
     int passed_count = 0;
     
     for (int i = 0; i < fcn_count; i++) {
-        system("rm dummy log");
+        system("rm -rf dummy");
 
         passed = true;
         fcns[i]();

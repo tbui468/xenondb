@@ -10,15 +10,15 @@ void paging_allocate_page() {
     assert(xntx_create(&tx, db, XNTXMODE_WR));
     struct xnpg meta_page = {.file_handle = tx->db->file_handle, .idx = 0 };
     struct xnpg page;
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 1; i++) {
         assert(xnpgr_allocate_page(&meta_page, tx, &page));
     }
     assert(xntx_commit(tx));
     assert(xndb_free(db));
 
-    //read file directly and assert that 3 pages allocated (metadata + 2 other pages)
+    //read file directly and assert that 3 pages allocated (metadata + catalog container 1, and 1 other pages)
     struct xnfile *handle;
-    assert(xnfile_create(&handle, "dummy", false, false));
+    assert(xnfile_create(&handle, "dummy/catalog", false, false));
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 7);
@@ -35,7 +35,7 @@ void paging_free_page() {
     {
         struct xntx *tx;
         assert(xntx_create(&tx, db, XNTXMODE_WR));
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 1; i++) {
             assert(xnpgr_allocate_page(&meta_page, tx, &page));
         }
         assert(xntx_commit(tx));
@@ -51,7 +51,7 @@ void paging_free_page() {
 
     //read file directly and assert that 2 pages allocated (metadata + 1 other page)
     struct xnfile *handle;
-    assert(xnfile_create(&handle, "dummy", false, false));
+    assert(xnfile_create(&handle, "dummy/catalog", false, false));
     uint8_t *buf = malloc(XNPG_SZ);
     assert(xnfile_read(handle, buf, 0, XNPG_SZ));
     assert(*buf == 3);
@@ -84,7 +84,7 @@ void paging_free_invalid_page() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
     struct xnpg meta_page = { .file_handle = db->file_handle, .idx = 0 };
-    struct xnpg page = { .file_handle = db->file_handle, .idx = 1 };
+    struct xnpg page = { .file_handle = db->file_handle, .idx = 2 };
     //attempt to free non-allocated page
     {
         struct xntx *tx;
