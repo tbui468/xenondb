@@ -29,6 +29,7 @@ xnresult_t xnctn_insert(struct xnctn *ctn, const uint8_t *buf, size_t size, stru
 xnresult_t xnctn_get(struct xnctn *ctn, struct xnitemid id, uint8_t *buf, size_t size);
 xnresult_t xnctn_get_size(struct xnctn *ctn, struct xnitemid id, size_t *size);
 xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id);
+xnresult_t xnctn_update(struct xnctn *ctn, struct xnitemid id, uint8_t *data, size_t size, struct xnitemid *new_id);
 
 xnresult_t xnctnitr_create(struct xnctnitr **out_itr, struct xnctn* ctn);
 xnresult_t xnctnitr_next(struct xnctnitr *itr, bool *valid);

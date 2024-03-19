@@ -181,6 +181,37 @@ xnresult_t xnctn_delete(struct xnctn *ctn, struct xnitemid id) {
     return xn_ok();
 }
 
+xnresult_t xnctn_update(struct xnctn *ctn, struct xnitemid id, uint8_t *data, size_t size, struct xnitemid *new_id) {
+    xnmm_init();
+
+    xn_ensure(ctn->pg.idx == id.pg_idx);
+
+    //read container metadata
+    uint16_t item_count;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
+    xn_ensure(id.arr_idx < item_count);
+
+    off_t ptr_off = XNCTN_HDR_SZ + id.arr_idx * 2 * sizeof(uint16_t); //TODO change to uint32_t
+    uint32_t ptr;
+    xn_ensure(xnpg_read(&ctn->pg, ctn->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
+
+    uint32_t used;
+    uint32_t data_size;
+    uint32_t data_off;
+    xnctn_get_ptr_fields(ptr, &used, &data_size, &data_off);
+    xn_ensure(used == 1);
+
+    if (data_size == size) {
+        xn_ensure(xnpg_write(&ctn->pg, ctn->tx, data, data_off, size, true));
+        *new_id = id;
+    } else {
+        xn_ensure(xnctn_delete(ctn, id));
+        xn_ensure(xnctn_insert(ctn, data, size, new_id));        
+    }
+
+    return xn_ok();
+}
+
 
 xnresult_t xnctnitr_create(struct xnctnitr **out_itr, struct xnctn* ctn) {
     xnmm_init();
