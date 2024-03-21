@@ -57,7 +57,7 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
         memcpy(buf + sizeof(uint64_t), hp->meta.file_handle->path, path_size);
 
         struct xnitemid id;
-//        xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+        xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
     }
 
     xn_ensure(xntx_commit(tx));

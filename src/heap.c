@@ -17,6 +17,9 @@ xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct
         xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &heap_meta_page));
 
         //metadata container
+        //TODO change contaier API to look like this.  Containers are just wrappers around pages and don't need to be heap allocated
+        //struct xnctn ctn = { .pg = heap_meta_page };
+        //xn_ensure(xnctn_init(&ctn, tx));
         xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, heap_meta_page, true, tx);
         struct xnctn *ctn = (struct xnctn*)scoped_ptr;
 
@@ -50,10 +53,49 @@ bool xnhp_free(void **h) {
     return xn_ok();
 }
 
+static xnresult_t xnhp_get_current_ctn(struct xnhp *hp, struct xntx *tx, struct xnctn* out_ctn) {
+    xnmm_init();
+
+    uint64_t cur_ctn_idx;
+
+    xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, hp->meta, false, tx);
+    struct xnctn *ctn = (struct xnctn*)scoped_ptr;
+
+    uint64_t cur_page_idx;
+    struct xnitemid id = { .pg_idx = 1 /*heap metadata page*/, .arr_idx = 1 /*current container idx*/ }; 
+    xn_ensure(xnctn_get(ctn, tx, id, (uint8_t*)&cur_page_idx, sizeof(uint64_t)));
+
+    out_ctn->pg.file_handle = hp->meta.file_handle;
+    out_ctn->pg.idx = cur_page_idx;
+    return xn_ok();
+}
+
+static xnresult_t xnhp_append_container(struct xnhp *hp, struct xntx *tx, struct xnctn *out_ctn) {
+    xnmm_init();
+
+    struct xnpg new_page;
+    xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &new_page));
+    xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, new_page, true, tx);
+    struct xnctn *ctn = (struct xnctn*)scoped_ptr;
+
+    out_ctn->pg = new_page;
+
+    return xn_ok();
+}
+
 xnresult_t xnhp_insert(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t size, struct xnitemid *id) {
-//    xn_ensure(false); 
-    //TODO implement this
-    //attempt to insert into cur_ctn_idx
-    //if there isn't enough space, allocate a new container and insert it there
-    return false;
+    xnmm_init();
+
+    struct xnctn ctn;
+    xn_ensure(xnhp_get_current_ctn(hp, tx, &ctn));
+
+    bool can_fit;
+    xn_ensure(xnctn_can_fit(&ctn, tx, size, &can_fit));
+    if (!can_fit) {
+        xn_ensure(xnhp_append_container(hp, tx, &ctn));
+    }
+
+    xn_ensure(xnctn_insert(&ctn, tx, buf, size, id));
+
+    return xn_ok();
 }
