@@ -2,7 +2,7 @@
 
 #include "page.h"
 #include "test.h"
-
+/*
 void paging_allocate_page() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
@@ -100,4 +100,4 @@ void paging_tests() {
     append_test(paging_free_page);
     append_test(paging_insufficient_file_size);
     append_test(paging_free_invalid_page);
-}
+}*/

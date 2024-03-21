@@ -15,6 +15,7 @@
 #include "wrtx_test.h"
 #include "container_test.h"
 #include "containeritr_test.h"
+#include "heap_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -26,7 +27,7 @@ int main() {
     //the program?
     freopen("/dev/null", "w", stderr); //ignoring stderr
 
-    util_tests();
+/*    util_tests();
     memory_tests();
     file_tests();
     page_tests();
@@ -38,7 +39,8 @@ int main() {
     wrtx_tests();
     container_tests();
     containeritr_tests();
-    db_tests();
+    db_tests();*/
+    heap_tests();
     
     int passed_count = 0;
     

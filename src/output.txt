@@ -1,0 +1,82 @@
+table.c: In function ‘xntbl_find’:
+table.c:49:33: warning: passing argument 2 of ‘memcpy’ makes pointer from integer without a cast [-Wint-conversion]
+   49 |     memcpy(buf + path_size, page->idx, sizeof(uint64_t));
+      |                             ~~~~^~~~~
+      |                                 |
+      |                                 uint64_t {aka long unsigned int}
+In file included from table.c:4:
+/usr/include/string.h:43:14: note: expected ‘const void * restrict’ but argument is of type ‘uint64_t’ {aka ‘long unsigned int’}
+   43 | extern void *memcpy (void *__restrict __dest, const void *__restrict __src,
+      |              ^~~~~~
+table.c:56:13: warning: implicit declaration of function ‘xnmm_cleanup’; did you mean ‘xnmm_cleanup_all’? [-Wimplicit-function-declaration]
+   56 |             xnmm_cleanup();
+      |             ^~~~~~~~~~~~
+      |             xnmm_cleanup_all
+table.c: In function ‘xntbl_insert’:
+table.c:74:33: warning: passing argument 2 of ‘memcpy’ makes pointer from integer without a cast [-Wint-conversion]
+   74 |     memcpy(buf + path_size, page->idx, sizeof(uint64_t));
+      |                             ~~~~^~~~~
+      |                                 |
+      |                                 uint64_t {aka long unsigned int}
+In file included from table.c:4:
+/usr/include/string.h:43:14: note: expected ‘const void * restrict’ but argument is of type ‘uint64_t’ {aka ‘long unsigned int’}
+   43 | extern void *memcpy (void *__restrict __dest, const void *__restrict __src,
+      |              ^~~~~~
+table.c: At top level:
+table.c:89:28: error: ‘tbl’ undeclared here (not in a function); did you mean ‘xntbl’?
+   89 |     struct xnentry* head = tbl->entries[bucket];
+      |                            ^~~
+      |                            xntbl
+table.c:89:41: error: ‘bucket’ undeclared here (not in a function)
+   89 |     struct xnentry* head = tbl->entries[bucket];
+      |                                         ^~~~~~
+In file included from file.h:2,
+                 from page.h:3,
+                 from table.h:3,
+                 from table.c:1:
+util.h:28:14: error: ‘_alloc_count_’ undeclared here (not in a function)
+   28 |     _allocs_[_alloc_count_].ptr = (void**)first_arg(__VA_ARGS__); \
+      |              ^~~~~~~~~~~~~
+table.c:91:5: note: in expansion of macro ‘xnmm_alloc’
+   91 |     xnmm_alloc(xn_free, xn_malloc, (void**)&entry, sizeof(struct xnentry));
+      |     ^~~~~~~~~~
+util.h:28:28: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘.’ token
+   28 |     _allocs_[_alloc_count_].ptr = (void**)first_arg(__VA_ARGS__); \
+      |                            ^
+table.c:91:5: note: in expansion of macro ‘xnmm_alloc’
+   91 |     xnmm_alloc(xn_free, xn_malloc, (void**)&entry, sizeof(struct xnentry));
+      |     ^~~~~~~~~~
+util.h:29:30: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘.’ token
+   29 |     _allocs_[_alloc_count_++].fcn = free_fcn; \
+      |                              ^
+table.c:91:5: note: in expansion of macro ‘xnmm_alloc’
+   91 |     xnmm_alloc(xn_free, xn_malloc, (void**)&entry, sizeof(struct xnentry));
+      |     ^~~~~~~~~~
+util.h:42:22: error: expected identifier or ‘(’ before ‘if’
+   42 | #define xn_ensure(b) if (!(b)) { \
+      |                      ^~
+util.h:30:5: note: in expansion of macro ‘xn_ensure’
+   30 |     xn_ensure(alloc_fcn(__VA_ARGS__))
+      |     ^~~~~~~~~
+table.c:91:5: note: in expansion of macro ‘xnmm_alloc’
+   91 |     xnmm_alloc(xn_free, xn_malloc, (void**)&entry, sizeof(struct xnentry));
+      |     ^~~~~~~~~~
+table.c:93:10: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘->’ token
+   93 |     entry->next = head;
+      |          ^~
+table.c:94:10: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘->’ token
+   94 |     entry->page = *page;
+      |          ^~
+table.c:95:10: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘->’ token
+   95 |     entry->val = val;
+      |          ^~
+table.c:96:8: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘->’ token
+   96 |     tbl->entries[bucket] = entry;
+      |        ^~
+table.c:98:5: error: expected identifier or ‘(’ before ‘return’
+   98 |     return xn_ok();
+      |     ^~~~~~
+table.c:99:1: error: expected identifier or ‘(’ before ‘}’ token
+   99 | }
+      | ^
+make: *** [Makefile:11: compile] Error 1

@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-void (*fcns[64])();
+void (*fcns[128])();
 char fcn_name[128];
 bool passed = true;
 int fcn_count = 0;

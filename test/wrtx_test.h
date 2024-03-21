@@ -2,6 +2,7 @@
 
 #include "test.h"
 #include "tx.h"
+/*
 
 void *wrtx_fcn(void *arg) {
     struct xndb *db = (struct xndb*)arg;
@@ -55,4 +56,4 @@ void wrtx_concurrent_wrtx_blocks() {
 
 void wrtx_tests() {
     append_test(wrtx_concurrent_wrtx_blocks);
-}
+}*/

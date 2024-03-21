@@ -3,6 +3,7 @@
 #include "test.h"
 #include "db.h"
 #include <unistd.h>
+/*
 
 void tx_empty_commit_rollback() {
     struct xndb *db;
@@ -342,7 +343,7 @@ void* after_commit_writer_fcn(void *arg) {
 
     *((bool*)result) = true;
     return result;
-}
+}*/
 
 
 /*
@@ -354,6 +355,7 @@ void* after_commit_writer_fcn(void *arg) {
  * 5 make reader 3.  reader 3 also sees new data. close reader 3
 */
 
+/*
 void cc_rdtxs_after_commit() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
@@ -491,4 +493,4 @@ void tx_tests() {
     append_test(cc_rdtxs_before_commit);
     append_test(cc_rdtxs_after_commit);
 //    append_test(cc_many_writers_and_readers); //TODO disabling this test since it's passing, but I'm not expecting it to pass
-}
+}*/

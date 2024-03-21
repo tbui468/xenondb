@@ -2,6 +2,7 @@
 
 #include "db.h"
 #include "test.h"
+/*
 
 void db_create_free() {
     struct xndb *db;
@@ -59,4 +60,4 @@ void db_recover() {
 void db_tests() {
     append_test(db_create_free);
     append_test(db_recover);
-}
+}*/

@@ -51,17 +51,18 @@ xnresult_t xntx_flush_writes(struct xntx *tx) {
     xnmm_init();
     xn_ensure(tx->mode == XNTXMODE_WR);
 
-    struct xnpg page = {.file_handle = tx->db->file_handle, .idx = -1};
+    //struct xnpg page = {.file_handle = tx->db->file_handle, .idx = -1};
     for (int i = 0; i < XNTBL_MAX_BUCKETS; i++) {
         struct xnentry *cur = tx->mod_pgs->entries[i];
         while (cur) {
-            page.idx = cur->pg_idx;
+            //page.idx = cur->page.idx;
             //TODO should this use mmap and mprotect???
-            xn_ensure(xnpg_flush(&page, cur->val));
+            xn_ensure(xnpg_flush(&cur->page, cur->val));
             cur = cur->next;
         }
     }
-    xn_ensure(xnfile_sync(tx->db->file_handle));
+    //TODO need to sync ALL files that were modified
+    //xn_ensure(xnfile_sync(tx->db->file_handle));
 
     return xn_ok();
 }

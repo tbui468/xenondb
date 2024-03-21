@@ -2,6 +2,7 @@
 
 #include "file.h"
 #include "page.h"
+#include "tx.h"
 
 #include <libgen.h>
 #include <string.h>
@@ -154,5 +155,98 @@ xnresult_t xnfile_grow(struct xnfile *handle) {
     size_t new_size = ceil((handle->size * 1.2f) / XNPG_SZ) * XNPG_SZ;
     xn_ensure(xnfile_set_size(handle, new_size));
     xn_ensure(xnfile_sync(handle));
+    return xn_ok();
+}
+
+xnresult_t xnfile_init(struct xnfile *file, struct xntx *tx) {
+    xnmm_init();
+
+    //metadata page
+    struct xnpg meta_page = { .file_handle = file, .idx = 0 };
+
+    //initialize metadata page
+    {
+        //zero out page
+        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
+        uint8_t *buf = (uint8_t*)scoped_ptr;
+        memset(buf, 0, XNPG_SZ);
+        xn_ensure(xnpg_write(&meta_page, tx, buf, 0, XNPG_SZ, true));
+
+        //set bit for metadata page to 'used'
+        uint8_t page0_used = 1;
+        xn_ensure(xnpg_write(&meta_page, tx, &page0_used, 0, sizeof(uint8_t), true));
+    }
+
+    return xn_ok();
+}
+
+static xnresult_t xnfile_find_free_page(struct xnfile *file, struct xntx *tx, struct xnpg *new_page) {
+    xnmm_init();
+
+    int byte_count = file->size / XNPG_SZ / 8;
+    int i, j;
+    struct xnpg meta_page = { .file_handle = file, .idx = 0 };
+    for (i = 0; i < byte_count; i++) {
+        uint8_t byte;
+        xn_ensure(xnpg_read(&meta_page, tx, &byte, i * sizeof(uint8_t), sizeof(uint8_t)));
+        for (j = 0; j < 8; j++) {
+            uint8_t mask = 1 << j;
+            uint8_t bit = (mask & byte) >> j;
+
+            if (bit == 0)
+                goto found_free_bit;
+        }
+    }
+
+    //if no free page found, grow file and set i = byte_count to allocate fresh page 
+    xn_ensure(xnfile_grow(file));
+    i = byte_count;
+    j = 0;
+
+found_free_bit:
+    new_page->file_handle = file;
+    new_page->idx = i * 8 + j;
+    return xn_ok();
+}
+
+static int xnpgr_bitmap_byte_offset(uint64_t page_idx) {
+    return page_idx / 8;
+}
+
+xnresult_t xnfile_free_page(struct xnfile *file, struct xntx *tx, struct xnpg *page) {
+    xnmm_init();
+
+    //set bit to 'free' in metadata page
+    struct xnpg meta_page = { .file_handle = file, .idx = 0 };
+    uint8_t byte;
+    xn_ensure(xnpg_read(&meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
+
+    //ensure that page is actually allocated
+    xn_ensure((byte & (1 << (page->idx % 8))) != 0);
+
+    byte &= ~(1 << (page->idx % 8));
+    xn_ensure(xnpg_write(&meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t), true));
+    return xn_ok();
+}
+
+xnresult_t xnfile_allocate_page(struct xnfile *file, struct xntx *tx, struct xnpg *page) {
+    xnmm_init();
+
+    xn_ensure(xnfile_find_free_page(file, tx, page));
+
+    //zero out new page data
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
+    uint8_t *buf = (uint8_t*)scoped_ptr;
+
+    memset(buf, 0, XNPG_SZ);
+    xn_ensure(xnpg_write(page, tx, buf, 0, XNPG_SZ, true));
+
+    //set bit to 'used' in metadata page
+    struct xnpg meta_page = { .file_handle = file, .idx = 0 };
+    uint8_t byte;
+    xn_ensure(xnpg_read(&meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t)));
+    byte |= 1 << (page->idx % 8);
+    xn_ensure(xnpg_write(&meta_page, tx, &byte, xnpgr_bitmap_byte_offset(page->idx), sizeof(uint8_t), true));
+
     return xn_ok();
 }

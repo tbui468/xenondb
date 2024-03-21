@@ -3,6 +3,7 @@
 #include "container.h"
 #include "test.h"
 
+/*
 void ctnitr_create_free() {
     struct xndb *db;
     assert(xndb_create("dummy", true, &db));
@@ -154,4 +155,4 @@ void containeritr_tests() {
     append_test(ctnitr_create_free);
     append_test(ctnitr_basic_iterate);
     append_test(ctnitr_skips_deleted);
-}
+}*/

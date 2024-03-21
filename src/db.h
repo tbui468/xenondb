@@ -9,7 +9,6 @@
 struct xndb {
     struct xnlog *log;
     pthread_mutex_t *wrtx_lock;
-    struct xnfile *file_handle;
     struct xntbl *pg_tbl;
 
     pthread_mutex_t *committed_wrtx_lock;
@@ -26,3 +25,4 @@ struct xndb {
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
 xnresult_t xndb_recover(struct xndb *db);
+xnresult_t xndb_init_resource(struct xnfile *file, struct xntx *tx);

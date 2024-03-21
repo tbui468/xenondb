@@ -1,7 +1,18 @@
 #pragma once
 
+#include "file.h"
+#include "page.h"
+#include "util.h"
+#include "tx.h"
+#include "container.h"
+
+
 struct xnhp {
-    struct xnpg pg;
+    struct xnpg meta;
 };
 
-xnresult_t xnhp_create(struct xnhp **hp, struct xnpg pg);
+xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct xntx *tx);
+bool xnhp_free(void **h);
+xnresult_t xnhp_insert(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t size, struct xnitemid *id);
+
+

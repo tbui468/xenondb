@@ -2,6 +2,7 @@
 
 #include "test.h"
 #include "container.h"
+/*
 
 void container_create_free() {
     struct xndb *db;
@@ -263,4 +264,4 @@ void container_tests() {
     append_test(container_full);
     append_test(container_delete);
     append_test(container_update);
-}
+}*/

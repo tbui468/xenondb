@@ -17,5 +17,3 @@ xnresult_t xnpg_mmap(struct xnpg *page, uint8_t **ptr);
 xnresult_t xnpg_munmap(uint8_t *ptr);
 xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, int offset, size_t size, bool log);
 xnresult_t xnpg_read(struct xnpg *page, struct xntx *tx, uint8_t *buf, int offset, size_t size);
-xnresult_t xnpgr_free_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg page);
-xnresult_t xnpgr_allocate_page(struct xnpg *meta_page, struct xntx *tx, struct xnpg *page);

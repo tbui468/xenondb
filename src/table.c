@@ -40,28 +40,46 @@ xnresult_t xntbl_free(void **t) {
 }
 
 uint8_t* xntbl_find(struct xntbl *tbl, struct xnpg *page) {
-    uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
+    xnmm_init();
+    size_t path_size = strlen(page->file_handle->path);
+    size_t size = path_size + sizeof(uint64_t);
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
+    uint8_t *buf = (uint8_t*)scoped_ptr;  
+    memcpy(buf, page->file_handle->path, path_size);
+    memcpy(buf + path_size, &page->idx, sizeof(uint64_t));
+    uint32_t hash = xn_hash(buf, size);
+    uint32_t bucket = hash % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
 
     while (cur) {
-        if (cur->pg_idx == page->idx)
+        if (cur->page.idx == page->idx && strcmp(cur->page.file_handle->path, page->file_handle->path) == 0) {
+            xnmm_cleanup_all();
             return cur->val;
+        }
 
         cur = cur->next;
     }
 
+    xnmm_cleanup_all();
     return NULL;
 }
 
 xnresult_t xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
     xnmm_init();
-    uint32_t bucket = page->idx % XNTBL_MAX_BUCKETS;
+    size_t path_size = strlen(page->file_handle->path);
+    size_t size = path_size + sizeof(uint64_t);
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
+    uint8_t *buf = (uint8_t*)scoped_ptr;  
+    memcpy(buf, page->file_handle->path, path_size);
+    memcpy(buf + path_size, &page->idx, sizeof(uint64_t));
+    uint32_t hash = xn_hash(buf, size);
+    uint32_t bucket = hash % XNTBL_MAX_BUCKETS;
     struct xnentry* cur = tbl->entries[bucket];
 
     while (cur) {
-        if (cur->pg_idx == page->idx) {
+        if (cur->page.idx == page->idx && strcmp(cur->page.file_handle->path, page->file_handle->path) == 0) {
             cur->val = val;
-            return true;
+            return xn_ok();
         }
             
         cur = cur->next;
@@ -73,7 +91,7 @@ xnresult_t xntbl_insert(struct xntbl *tbl, struct xnpg *page, uint8_t *val) {
     xnmm_alloc(xn_free, xn_malloc, (void**)&entry, sizeof(struct xnentry));
 
     entry->next = head;
-    entry->pg_idx = page->idx;
+    entry->page = *page;
     entry->val = val;
     tbl->entries[bucket] = entry;
 

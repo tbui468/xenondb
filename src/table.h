@@ -5,7 +5,7 @@
 #define XNTBL_MAX_BUCKETS 128
 
 struct xnentry {
-    uint64_t pg_idx;
+    struct xnpg page;
     uint8_t *val;
     struct xnentry *next;
 };
