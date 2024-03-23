@@ -50,12 +50,13 @@ xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, in
     memcpy(cpy + offset, buf, size);
 
     if (log) {
-        size_t data_size = size + sizeof(uint64_t) + sizeof(int);; //including page index and offset
+        size_t data_size = size + + sizeof(uint64_t) + sizeof(uint64_t) + sizeof(int);; //including resource id, page index and offset
         xnmm_scoped_alloc(scoped_ptr1, xn_free, xn_malloc, &scoped_ptr1, data_size);
         uint8_t *update_data = (uint8_t*)scoped_ptr1;
-        memcpy(update_data, &page->idx, sizeof(uint64_t));
-        memcpy(update_data + sizeof(uint64_t), &offset, sizeof(int));
-        memcpy(update_data + sizeof(uint64_t) + sizeof(int), buf, size);
+        memcpy(update_data, &page->file_handle->id, sizeof(uint64_t));
+        memcpy(update_data + sizeof(uint64_t), &page->idx, sizeof(uint64_t));
+        memcpy(update_data + sizeof(uint64_t) * 2, &offset, sizeof(int));
+        memcpy(update_data + sizeof(uint64_t) * 2 + sizeof(int), buf, size);
 
         size_t rec_size = xnlog_record_size(data_size);
         xnmm_scoped_alloc(scoped_ptr2, xn_free, xn_malloc, &scoped_ptr2, rec_size);

@@ -22,7 +22,7 @@ struct xnlogitr {
     uint8_t *buf;
 };
 
-xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool create);
+xnresult_t xnlog_create(struct xnlog **out_log, struct xnfile *file, bool create);
 xnresult_t xnlog_free(void **log);
 xnresult_t xnlog_flush(struct xnlog *log);
 xnresult_t xnlog_append(struct xnlog *log, const uint8_t *log_record, size_t size);

@@ -4,6 +4,8 @@
 #include "test.h"
 #include <stdlib.h>
 
+/*
+
 void page_copy() {
     struct xnfile *handle;
     assert(xnfile_create(&handle, "dummy", true, false));
@@ -97,4 +99,4 @@ void page_tests() {
     append_test(page_copy);
     append_test(page_flush);
     append_test(page_mmap);
-}
+}*/

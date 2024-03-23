@@ -1,12 +1,13 @@
 #include "heap.h"
 #include <string.h>
 
-xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct xntx *tx) {
+
+xnresult_t xnhp_open(struct xnhp **out_hp, struct xnfile *file, bool create, struct xntx *tx) {
     xnmm_init();
 
     struct xnhp *hp;
     xnmm_alloc(xn_free, xn_malloc, (void**)&hp, sizeof(struct xnhp));
-    xnmm_alloc(xnfile_close, xnfile_create, &hp->meta.file_handle, path, create, false); //TODO any reason to set 'direct' flag to true?
+    hp->meta.file_handle = file;
     hp->meta.idx = 1;
 
     if (create) {
@@ -17,27 +18,23 @@ xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct
         xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &heap_meta_page));
 
         //metadata container
-        //TODO change contaier API to look like this.  Containers are just wrappers around pages and don't need to be heap allocated
-        //struct xnctn ctn = { .pg = heap_meta_page };
-        //xn_ensure(xnctn_init(&ctn, tx));
-        xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, heap_meta_page, true, tx);
-        struct xnctn *ctn = (struct xnctn*)scoped_ptr;
+        struct xnctn meta_ctn = { .pg = heap_meta_page };
+        xn_ensure(xnctn_init(&meta_ctn, tx));
 
         //first data container
         struct xnpg data_page;
-        {
-            xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &data_page)); 
-            xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, data_page, true, tx);
-        }
+        xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &data_page)); 
+        struct xnctn data_ctn = { .pg = data_page };
+        xn_ensure(xnctn_init(&data_ctn, tx));
 
         //set heap file metadata (only 2 for now)
         uint64_t start_ctn_idx = data_page.idx;
         struct xnitemid start_ctn_id;
-        xn_ensure(xnctn_insert(ctn, tx, (uint8_t*)&start_ctn_idx, sizeof(uint64_t), &start_ctn_id));
+        xn_ensure(xnctn_insert(&meta_ctn, tx, (uint8_t*)&start_ctn_idx, sizeof(uint64_t), &start_ctn_id));
 
         uint64_t cur_ctn_idx = start_ctn_idx;
         struct xnitemid cur_ctn_id;
-        xn_ensure(xnctn_insert(ctn, tx, (uint8_t*)&cur_ctn_idx, sizeof(uint64_t), &cur_ctn_id));
+        xn_ensure(xnctn_insert(&meta_ctn, tx, (uint8_t*)&cur_ctn_idx, sizeof(uint64_t), &cur_ctn_id));
     }
 
     *out_hp = hp;
@@ -47,7 +44,6 @@ xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct
 bool xnhp_free(void **h) {
     xnmm_init();
     struct xnhp *hp = (struct xnhp*)(*h);
-    xn_ensure(xnfile_close((void**)&hp->meta.file_handle));
     xn_free(h);
 
     return xn_ok();
@@ -58,12 +54,11 @@ static xnresult_t xnhp_get_current_ctn(struct xnhp *hp, struct xntx *tx, struct 
 
     uint64_t cur_ctn_idx;
 
-    xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, hp->meta, false, tx);
-    struct xnctn *ctn = (struct xnctn*)scoped_ptr;
+    struct xnctn meta_ctn = { .pg = hp->meta };
 
     uint64_t cur_page_idx;
     struct xnitemid id = { .pg_idx = 1 /*heap metadata page*/, .arr_idx = 1 /*current container idx*/ }; 
-    xn_ensure(xnctn_get(ctn, tx, id, (uint8_t*)&cur_page_idx, sizeof(uint64_t)));
+    xn_ensure(xnctn_get(&meta_ctn, tx, id, (uint8_t*)&cur_page_idx, sizeof(uint64_t)));
 
     out_ctn->pg.file_handle = hp->meta.file_handle;
     out_ctn->pg.idx = cur_page_idx;
@@ -75,10 +70,8 @@ static xnresult_t xnhp_append_container(struct xnhp *hp, struct xntx *tx, struct
 
     struct xnpg new_page;
     xn_ensure(xnfile_allocate_page(hp->meta.file_handle, tx, &new_page));
-    xnmm_scoped_alloc(scoped_ptr, xnctn_free, xnctn_open, (struct xnctn**)&scoped_ptr, new_page, true, tx);
-    struct xnctn *ctn = (struct xnctn*)scoped_ptr;
-
     out_ctn->pg = new_page;
+    xn_ensure(xnctn_init(out_ctn, tx));
 
     return xn_ok();
 }

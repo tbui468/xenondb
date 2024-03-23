@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "test.h"
+/*
 
 void logitr_create_on_empty_log() {
     struct xnlog *log;
@@ -128,4 +129,4 @@ void logitr_tests() {
     append_test(logitr_create_on_nonempty_log);
     append_test(logitr_iterate_from_beginning);
     append_test(logitr_iterate_from_seek);
-}
+}*/

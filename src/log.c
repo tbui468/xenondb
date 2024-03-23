@@ -3,15 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool create) {
+xnresult_t xnlog_create(struct xnlog **out_log, struct xnfile *file, bool create) {
     xnmm_init();
 
     struct xnlog *log;
     xnmm_alloc(xn_free, xn_malloc, (void**)&log, sizeof(struct xnlog));
 
-    xnmm_alloc(xnfile_close, xnfile_create, &log->page.file_handle, log_path, create, true);
-    //TODO arbitrary log size of 32 pages - should choose this more carefully
-    xn_ensure(xnfile_set_size(log->page.file_handle, 32 * XNPG_SZ));
+    log->page.file_handle = file;
 
     //find end of the log
     {
@@ -37,7 +35,6 @@ xnresult_t xnlog_create(struct xnlog **out_log, const char *log_path, bool creat
 xnresult_t xnlog_free(void **l) {
     xnmm_init();
     struct xnlog *log = (struct xnlog*)(*l);
-    xn_ensure(xnfile_close((void**)&log->page.file_handle));
     free(log->buf);
     free(log);
     return xn_ok();

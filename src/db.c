@@ -5,6 +5,38 @@
 #include <string.h>
 #include <limits.h>
 
+static void xndb_make_path(char *out, const char *path1, const char *path2) {
+    out[0] = '\0';
+    strcat(out, path1);
+    strcat(out, "/");
+    strcat(out, path2);
+}
+
+static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const char *filename, bool create, bool direct) {
+    xnmm_init();
+
+    char path[PATH_MAX];
+    xndb_make_path(path, db->dir_path, "log");
+    struct xnfile *file = NULL;
+
+    for (int i = 0; i < db->file_id_counter; i++) {
+        if (strcmp(db->files[i]->path, path) == 0) {
+            file = db->files[i];
+            break;
+        }
+    }
+
+    if (!file) {
+        uint64_t file_id = db->file_id_counter++;
+        xnmm_alloc(xnfile_close, xnfile_create, &db->files[file_id], path, file_id, create, direct);
+        file = db->files[file_id];
+    }
+
+
+    *out_file = file;
+    return xn_ok();
+}
+
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) {
     xnmm_init();
 
@@ -16,54 +48,66 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->rdtx_count_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->committed_wrtx_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->tx_id_counter_lock);
+    db->dir_path = dir_path;
     db->rdtx_count = 0;
     db->committed_wrtx = NULL;
     db->tx_id_counter = 1;
+    db->file_id_counter = 0;
 
     if (create) {
         xn_ensure(xn_mkdir(dir_path, 0700));
     }
 
-    //log file does not use a container/heap structure,
-    //and uses the file api directly
-    char log_path[PATH_MAX];
-    log_path[0] = '\0';
-    strcat(log_path, dir_path);
-    strcat(log_path, "/log");
-    xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_path, create);
+    //log file uses file API directly rather than relying on container/heap/other persistent data structures
+    struct xnfile *log_file;
+    xn_ensure(xndb_get_file(db, &log_file, "log", create, true));
+    xn_ensure(xnfile_set_size(log_file, 32 * XNPG_SZ));
+    xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_file, create);
 
-    //need table initialized for tx to work
+    //need root page table initialized before transactions can be created
     xnmm_alloc(xntbl_free, xntbl_create, &db->pg_tbl, true);
-
-    //resource catalog
-    char catalog_path[PATH_MAX];
-    catalog_path[0] = '\0';
-    strcat(catalog_path, dir_path);
-    strcat(catalog_path, "/catalog");
 
     struct xntx *tx;
     xnmm_alloc(xntx_rollback, xntx_create, &tx, db, XNTXMODE_WR);
 
-    xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_path, create, tx);
+    //resource catalog
+    struct xnfile *catalog_file;
+    xn_ensure(xndb_get_file(db, &catalog_file, "catalog", create, false));
+    xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_file, create, tx);
     struct xnhp *hp = (struct xnhp*)scoped_ptr;
 
     if (create) {
-        size_t path_size = strlen(hp->meta.file_handle->path);
-        size_t size = path_size + sizeof(uint64_t);
-        uint64_t resource_id = 42; //TODO temporary placeholder until tx ids are implemented. This needs to be stored in catalog too
-        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
-        uint8_t *buf = (uint8_t*)scoped_ptr;
-        memcpy(buf, &resource_id, sizeof(uint64_t));
-        memcpy(buf + sizeof(uint64_t), hp->meta.file_handle->path, path_size);
+        //insert log file 
+        {
+            size_t path_size = strlen(log_file->path);
+            size_t size = path_size + sizeof(uint64_t);
+            xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
+            uint8_t *buf = (uint8_t*)scoped_ptr;
+            memcpy(buf, &log_file->id, sizeof(uint64_t));
+            memcpy(buf + sizeof(uint64_t), log_file->path, path_size);
 
-        struct xnitemid id;
-        xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+            struct xnitemid id;
+            xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+        }
+        //insert catalog file
+        {
+            size_t path_size = strlen(catalog_file->path);
+            size_t size = path_size + sizeof(uint64_t);
+            xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
+            uint8_t *buf = (uint8_t*)scoped_ptr;
+            memcpy(buf, &catalog_file->id, sizeof(uint64_t));
+            memcpy(buf + sizeof(uint64_t), catalog_file->path, path_size);
+
+            struct xnitemid id;
+            xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+        }
     }
+
+    //TODO load in all files into memory for quick access from array
 
     xn_ensure(xntx_commit(tx));
 
-    //TODO commenting out recovery for now to fix major bugs caused by removing db->file_handle
-    //xn_ensure(xndb_recover(db));
+    xn_ensure(xndb_recover(db));
 
    *out_db = db;
     return xn_ok();
@@ -76,11 +120,12 @@ xnresult_t xndb_free(struct xndb *db) {
     xn_ensure(xnmtx_free((void**)&db->committed_wrtx_lock));
     xn_ensure(xnmtx_free((void**)&db->tx_id_counter_lock));
     xn_ensure(xntbl_free((void**)&db->pg_tbl));
+    for (int i = 0; i < db->file_id_counter; i++) {
+        xn_ensure(xnfile_close((void**)&db->files[i]));
+    }
     free(db);
     return xn_ok();
 }
-
-
 
 static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx, int page_off, int tx_id) {
     xnmm_init();
@@ -108,10 +153,12 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
             //writing changes back to file (but not logging)
-            //TODO: need to replace tx->db->file_handle with the actual resource that needs to be redone
-            struct xnpg page = { .file_handle = NULL, .idx = *((uint64_t*)buf) };
-            size_t data_hdr_size = sizeof(uint64_t) + sizeof(int);
-            int off = *((int*)(buf + sizeof(uint64_t)));
+            uint64_t file_id = *((uint64_t*)buf);
+            uint64_t pg_idx = *((uint64_t*)(buf + sizeof(uint64_t)));
+            int off = *((int*)(buf + sizeof(uint64_t) * 2));
+
+            struct xnpg page = { .file_handle = db->files[file_id], .idx = pg_idx };
+            size_t data_hdr_size = sizeof(file_id) + sizeof(pg_idx) + sizeof(off);
             size_t size = data_size - data_hdr_size;
             xn_ensure(xnpg_write(&page, tx, buf + data_hdr_size, off, size, false));
         }
@@ -132,7 +179,6 @@ xnresult_t xndb_recover(struct xndb *db) {
     uint64_t start_pageidx;
     int start_pageoff;
     int start_txid = 0;
-
     bool valid;
     while (true) {
         xn_ensure(xnlogitr_next(itr, &valid));
@@ -151,5 +197,24 @@ xnresult_t xndb_recover(struct xndb *db) {
     }
 
     xn_ensure(xntx_commit(tx));
+    return xn_ok();
+}
+
+xnresult_t xndb_open_resource(struct xndb *db, struct xnrs **rs, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
+    xnmm_init();
+    switch (type) {
+        case XNRST_HEAP: {
+            struct xnfile *file;
+            xn_ensure(xndb_get_file(db, &file, filename, create, false));
+            struct xnhp *hp;
+            xn_ensure(xnhp_open(&hp, file, create, tx));
+            *rs = (struct xnrs*)hp;
+            break;
+        }
+        default:
+            xn_ensure(false);
+            break;
+    }
+
     return xn_ok();
 }

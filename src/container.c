@@ -1,6 +1,7 @@
 #include "container.h"
 #include <string.h>
 
+/*
 xnresult_t xnctn_open(struct xnctn **out_ctn, struct xnpg pg, bool create, struct xntx *tx) {
     xnmm_init();
     
@@ -26,6 +27,26 @@ xnresult_t xnctn_open(struct xnctn **out_ctn, struct xnpg pg, bool create, struc
     }
 
     *out_ctn = ctn;
+    return xn_ok();
+}*/
+
+xnresult_t xnctn_init(struct xnctn *ctn, struct xntx *tx) {
+    xnmm_init();
+
+    //zero out page
+    xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
+    uint8_t *buf = (uint8_t*)scoped_ptr;
+    memset(buf, 0, XNPG_SZ);
+    xn_ensure(xnpg_write(&ctn->pg, tx, buf, 0, XNPG_SZ, true));
+
+    //write header
+    uint16_t item_count = 0;
+    uint16_t floor = XNCTN_HDR_SZ;
+    uint16_t ceil = XNPG_SZ;
+    xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&item_count, 0, sizeof(uint16_t), true));
+    xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&floor, sizeof(uint16_t), sizeof(uint16_t), true));
+    xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&ceil, sizeof(uint16_t) * 2, sizeof(uint16_t), true));
+
     return xn_ok();
 }
 

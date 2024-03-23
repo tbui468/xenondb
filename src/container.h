@@ -20,7 +20,8 @@ struct xnctnitr {
     struct xnctn* ctn;
 };
 
-xnresult_t xnctn_open(struct xnctn **out_ctn, struct xnpg pg, bool create, struct xntx *tx);
+//xnresult_t xnctn_open(struct xnctn **out_ctn, struct xnpg pg, bool create, struct xntx *tx);
+xnresult_t xnctn_init(struct xnctn *ctn, struct xntx *tx);
 bool xnctn_free(void **c);
 xnresult_t xnctn_can_fit(struct xnctn *ctn, struct xntx *tx, size_t size, bool *result);
 xnresult_t xnctn_insert(struct xnctn *ctn, struct xntx *tx, const uint8_t *buf, size_t size, struct xnitemid *out_id);

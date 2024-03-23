@@ -28,7 +28,7 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
     return xn_ok();
 }
 
-xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool create, bool direct) {
+xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, int id, bool create, bool direct) {
     xnmm_init();
 
     struct xnfile *handle;
@@ -58,6 +58,7 @@ xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, bool c
     xn_ensure(xn_stat(handle->path, &s));
     handle->size = s.st_size;
     handle->block_size = s.st_blksize;
+    handle->id = id;
 
     //need to sync parent directory to ensure new file remains on disk in case of failure
     if (handle->size == 0) {

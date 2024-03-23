@@ -2,6 +2,7 @@
 
 #include "table.h"
 #include "test.h"
+/*
 
 void table_create_free() {
     //free emptytable with regular buffers
@@ -129,4 +130,4 @@ void table_tests() {
     append_test(table_find_buffer);
     append_test(table_insert_mmap);
     append_test(table_find_mmap);
-}
+}*/

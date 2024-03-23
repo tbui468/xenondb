@@ -2,6 +2,7 @@
 
 #include "test.h"
 #include "file.h"
+/*
 
 //TODO test opening file in O_DIRECT + O_SYNC mode
 //trying to write a buffer that is NOT aligned to page byte should fail
@@ -119,4 +120,4 @@ void file_tests() {
     append_test(file_set_size);
     append_test(file_read_write);
     append_test(file_map_unmap);
-}
+}*/

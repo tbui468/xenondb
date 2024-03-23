@@ -7,7 +7,11 @@
 #include "tx.h"
 
 struct xndb {
+    const char* dir_path;
     struct xnlog *log;
+    struct xnfile *files[32]; //TODO should not hard-code the masimum number of resources
+    int file_id_counter;
+
     pthread_mutex_t *wrtx_lock;
     struct xntbl *pg_tbl;
 
@@ -21,8 +25,20 @@ struct xndb {
     int tx_id_counter;
 };
 
+struct xnrs {
+
+};
+
+enum xnrst {
+    XNRST_HEAP,
+    //XNRST_BTREE,
+    //XNRST_HASH,
+    //XNRS_IVFFLAT
+};
+
 
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
 xnresult_t xndb_recover(struct xndb *db);
 xnresult_t xndb_init_resource(struct xnfile *file, struct xntx *tx);
+xnresult_t xndb_open_resource(struct xndb *db, struct xnrs **rs, const char *filename, bool create, enum xnrst type, struct xntx *tx);

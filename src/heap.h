@@ -11,7 +11,7 @@ struct xnhp {
     struct xnpg meta;
 };
 
-xnresult_t xnhp_open(struct xnhp **out_hp, const char* path, bool create, struct xntx *tx);
+xnresult_t xnhp_open(struct xnhp **out_hp, struct xnfile *file, bool create, struct xntx *tx);
 bool xnhp_free(void **h);
 xnresult_t xnhp_insert(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t size, struct xnitemid *id);
 
