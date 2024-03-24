@@ -25,7 +25,7 @@ int main() {
     //TODO commenting this out causes some messages to show up
     //when running some tests.  Are these stack traces from errors in 
     //the program?
-    freopen("/dev/null", "w", stderr); //ignoring stderr
+//    freopen("/dev/null", "w", stderr); //ignoring stderr
 
 /*    util_tests();
     memory_tests();

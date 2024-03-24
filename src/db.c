@@ -12,11 +12,13 @@ static void xndb_make_path(char *out, const char *path1, const char *path2) {
     strcat(out, path2);
 }
 
-static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const char *filename, bool create, bool direct) {
+//if tx is NULL, don't include any new files in the catalog
+//otherwise, insert new resource into catalog
+static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const char *filename, bool create, bool direct, struct xntx *tx) {
     xnmm_init();
 
     char path[PATH_MAX];
-    xndb_make_path(path, db->dir_path, "log");
+    xndb_make_path(path, db->dir_path, filename);
     struct xnfile *file = NULL;
 
     for (int i = 0; i < db->file_id_counter; i++) {
@@ -30,6 +32,28 @@ static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const
         uint64_t file_id = db->file_id_counter++;
         xnmm_alloc(xnfile_close, xnfile_create, &db->files[file_id], path, file_id, create, direct);
         file = db->files[file_id];
+
+        if (tx) { 
+            struct xnfile *catalog_file;
+            xn_ensure(xndb_get_file(db, &catalog_file, "catalog", false, false, NULL));
+            xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_file, false, tx);
+            struct xnhp *hp = (struct xnhp*)scoped_ptr;
+
+            //TODO if file is already in catalog, should not add it again
+            //iterate through heap and check if file id + path is already in catalog
+            
+            {
+                size_t path_size = strlen(file->path);
+                size_t size = path_size + sizeof(uint64_t);
+                xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
+                uint8_t *buf = (uint8_t*)scoped_ptr;
+                memcpy(buf, &file->id, sizeof(uint64_t));
+                memcpy(buf + sizeof(uint64_t), file->path, path_size);
+
+                struct xnitemid id;
+                xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+            }
+        }
     }
 
 
@@ -59,8 +83,9 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
     }
 
     //log file uses file API directly rather than relying on container/heap/other persistent data structures
+    //not inserting into catalog since it may not exist yet
     struct xnfile *log_file;
-    xn_ensure(xndb_get_file(db, &log_file, "log", create, true));
+    xn_ensure(xndb_get_file(db, &log_file, "log", create, true, NULL));
     xn_ensure(xnfile_set_size(log_file, 32 * XNPG_SZ));
     xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_file, create);
 
@@ -71,13 +96,14 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
     xnmm_alloc(xntx_rollback, xntx_create, &tx, db, XNTXMODE_WR);
 
     //resource catalog
+    //not inserting file into catalog since it may not exist yet
     struct xnfile *catalog_file;
-    xn_ensure(xndb_get_file(db, &catalog_file, "catalog", create, false));
+    xn_ensure(xndb_get_file(db, &catalog_file, "catalog", create, false, NULL));
     xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_file, create, tx);
     struct xnhp *hp = (struct xnhp*)scoped_ptr;
 
     if (create) {
-        //insert log file 
+        //insert log file into catalog
         {
             size_t path_size = strlen(log_file->path);
             size_t size = path_size + sizeof(uint64_t);
@@ -89,7 +115,7 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
             struct xnitemid id;
             xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
         }
-        //insert catalog file
+        //insert catalog file into catalog
         {
             size_t path_size = strlen(catalog_file->path);
             size_t size = path_size + sizeof(uint64_t);
@@ -200,17 +226,30 @@ xnresult_t xndb_recover(struct xndb *db) {
     return xn_ok();
 }
 
-xnresult_t xndb_open_resource(struct xndb *db, struct xnrs **rs, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
+xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
     xnmm_init();
     switch (type) {
         case XNRST_HEAP: {
             struct xnfile *file;
-            xn_ensure(xndb_get_file(db, &file, filename, create, false));
-            struct xnhp *hp;
-            xn_ensure(xnhp_open(&hp, file, create, tx));
-            *rs = (struct xnrs*)hp;
+            xn_ensure(xndb_get_file(db, &file, filename, create, false, tx));
+            xn_ensure(xnhp_open(&out_rs->as.hp, file, create, tx));
+            out_rs->type = XNRST_HEAP;
             break;
         }
+        default:
+            xn_ensure(false);
+            break;
+    }
+
+    return xn_ok();
+}
+
+xnresult_t xndb_close_resource(struct xnrs rs) {
+    xnmm_init();
+    switch (rs.type) {
+        case XNRST_HEAP:
+            xnhp_free((void**)&rs.as.hp);
+            break;
         default:
             xn_ensure(false);
             break;

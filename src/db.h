@@ -25,10 +25,6 @@ struct xndb {
     int tx_id_counter;
 };
 
-struct xnrs {
-
-};
-
 enum xnrst {
     XNRST_HEAP,
     //XNRST_BTREE,
@@ -36,9 +32,19 @@ enum xnrst {
     //XNRS_IVFFLAT
 };
 
+struct xnrs {
+    enum xnrst type;
+    union {
+        struct xnhp *hp;
+        //struct xnbtree
+        //struct xnhash
+        //struct xnivfflat
+    } as;
+};
 
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
 xnresult_t xndb_recover(struct xndb *db);
 xnresult_t xndb_init_resource(struct xnfile *file, struct xntx *tx);
-xnresult_t xndb_open_resource(struct xndb *db, struct xnrs **rs, const char *filename, bool create, enum xnrst type, struct xntx *tx);
+xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *filename, bool create, enum xnrst type, struct xntx *tx);
+xnresult_t xndb_close_resource(struct xnrs rs);
