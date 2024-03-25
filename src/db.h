@@ -9,8 +9,8 @@
 struct xndb {
     const char* dir_path;
     struct xnlog *log;
-    struct xnfile *files[32]; //TODO should not hard-code the masimum number of resources
-    int file_id_counter;
+    int file_counter;
+    struct xnfile *files[32];
 
     pthread_mutex_t *wrtx_lock;
     struct xntbl *pg_tbl;
@@ -34,6 +34,7 @@ enum xnrst {
 
 struct xnrs {
     enum xnrst type;
+    struct xnfile *file;
     union {
         struct xnhp *hp;
         //struct xnbtree

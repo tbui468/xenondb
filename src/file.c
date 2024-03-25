@@ -28,7 +28,7 @@ static xnresult_t xnfile_sync_parent(const char* child_path) {
     return xn_ok();
 }
 
-xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, int id, bool create, bool direct) {
+xnresult_t xnfile_create(struct xnfile **out_handle, const char *path, int id, bool create, bool direct) {
     xnmm_init();
 
     struct xnfile *handle;
@@ -46,13 +46,10 @@ xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, int id
     //closing file immediately in case of failures in following function calls.
     //reopening fd at the end of this function.  Not the best way to deal with
     //closing a fd on failure, but it works for now
-    xn_ensure(xn_open(relpath, flags, S_IRUSR | S_IWUSR, &handle->fd));
+    xn_ensure(xn_open(path, flags, S_IRUSR | S_IWUSR, &handle->fd));
     xn_ensure(close(handle->fd) == 0);
 
-    char buf[PATH_MAX];
-    xn_ensure(xn_realpath(relpath, buf));
-    xnmm_alloc(xn_free, xn_malloc, (void**)&handle->path, strlen(buf) + 1);
-    strcpy(handle->path, buf);
+    handle->path = strdup(path);
 
     struct stat s;
     xn_ensure(xn_stat(handle->path, &s));
@@ -62,18 +59,20 @@ xnresult_t xnfile_create(struct xnfile **out_handle, const char *relpath, int id
 
     //need to sync parent directory to ensure new file remains on disk in case of failure
     if (handle->size == 0) {
-        xn_ensure(xnfile_sync_parent(buf));
+        xn_ensure(xnfile_sync_parent(path));
     }
 
-    xn_ensure(xn_open(relpath, flags, S_IRUSR | S_IWUSR, &handle->fd));
+    xn_ensure(xn_open(path, flags, S_IRUSR | S_IWUSR, &handle->fd));
 
     *out_handle = handle;
     return xn_ok();
 }
 
-xnresult_t xnfile_close(void **handle) {
+bool xnfile_close(void **handle) {
     xnmm_init();
-    xn_ensure(close(((struct xnfile*)(*handle))->fd) == 0);
+    struct xnfile *file = (struct xnfile*)(*handle);
+    close(file->fd);
+    free(file->path);
     free(*handle);
     return xn_ok();
 }

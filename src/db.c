@@ -12,16 +12,14 @@ static void xndb_make_path(char *out, const char *path1, const char *path2) {
     strcat(out, path2);
 }
 
-//if tx is NULL, don't include any new files in the catalog
-//otherwise, insert new resource into catalog
-static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const char *filename, bool create, bool direct, struct xntx *tx) {
+static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const char *filename, bool create, bool direct) {
     xnmm_init();
 
     char path[PATH_MAX];
     xndb_make_path(path, db->dir_path, filename);
     struct xnfile *file = NULL;
 
-    for (int i = 0; i < db->file_id_counter; i++) {
+    for (int i = 0; i < db->file_counter; i++) {
         if (strcmp(db->files[i]->path, path) == 0) {
             file = db->files[i];
             break;
@@ -29,35 +27,13 @@ static xnresult_t xndb_get_file(struct xndb *db, struct xnfile **out_file, const
     }
 
     if (!file) {
-        uint64_t file_id = db->file_id_counter++;
-        xnmm_alloc(xnfile_close, xnfile_create, &db->files[file_id], path, file_id, create, direct);
-        file = db->files[file_id];
-
-        if (tx) { 
-            struct xnfile *catalog_file;
-            xn_ensure(xndb_get_file(db, &catalog_file, "catalog", false, false, NULL));
-            xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_file, false, tx);
-            struct xnhp *hp = (struct xnhp*)scoped_ptr;
-
-            //TODO if file is already in catalog, should not add it again
-            //iterate through heap and check if file id + path is already in catalog
-            
-            {
-                size_t path_size = strlen(file->path);
-                size_t size = path_size + sizeof(uint64_t);
-                xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
-                uint8_t *buf = (uint8_t*)scoped_ptr;
-                memcpy(buf, &file->id, sizeof(uint64_t));
-                memcpy(buf + sizeof(uint64_t), file->path, path_size);
-
-                struct xnitemid id;
-                xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
-            }
-        }
+        int idx = db->file_counter++;
+        xnmm_alloc(xnfile_close, xnfile_create, &db->files[idx], path, 0, create, direct);
+        file = db->files[idx];
     }
 
-
     *out_file = file;
+
     return xn_ok();
 }
 
@@ -72,66 +48,35 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->rdtx_count_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->committed_wrtx_lock);
     xnmm_alloc(xnmtx_free, xnmtx_create, &db->tx_id_counter_lock);
-    db->dir_path = dir_path;
     db->rdtx_count = 0;
     db->committed_wrtx = NULL;
     db->tx_id_counter = 1;
-    db->file_id_counter = 0;
+    db->file_counter = 0;
 
     if (create) {
         xn_ensure(xn_mkdir(dir_path, 0700));
     }
 
-    //log file uses file API directly rather than relying on container/heap/other persistent data structures
-    //not inserting into catalog since it may not exist yet
+    char abs_path[PATH_MAX];
+    xn_ensure(xn_realpath(dir_path, abs_path));
+    db->dir_path = strdup(abs_path);
+
     struct xnfile *log_file;
-    xn_ensure(xndb_get_file(db, &log_file, "log", create, true, NULL));
+    xn_ensure(xndb_get_file(db, &log_file, "log", create, true));
     xn_ensure(xnfile_set_size(log_file, 32 * XNPG_SZ));
     xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_file, create);
 
-    //need root page table initialized before transactions can be created
-    xnmm_alloc(xntbl_free, xntbl_create, &db->pg_tbl, true);
-
-    struct xntx *tx;
-    xnmm_alloc(xntx_rollback, xntx_create, &tx, db, XNTXMODE_WR);
-
-    //resource catalog
-    //not inserting file into catalog since it may not exist yet
-    struct xnfile *catalog_file;
-    xn_ensure(xndb_get_file(db, &catalog_file, "catalog", create, false, NULL));
-    xnmm_scoped_alloc(scoped_ptr, xnhp_free, xnhp_open, (struct xnhp**)&scoped_ptr, catalog_file, create, tx);
-    struct xnhp *hp = (struct xnhp*)scoped_ptr;
-
     if (create) {
-        //insert log file into catalog
-        {
-            size_t path_size = strlen(log_file->path);
-            size_t size = path_size + sizeof(uint64_t);
-            xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
-            uint8_t *buf = (uint8_t*)scoped_ptr;
-            memcpy(buf, &log_file->id, sizeof(uint64_t));
-            memcpy(buf + sizeof(uint64_t), log_file->path, path_size);
-
-            struct xnitemid id;
-            xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
-        }
-        //insert catalog file into catalog
-        {
-            size_t path_size = strlen(catalog_file->path);
-            size_t size = path_size + sizeof(uint64_t);
-            xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, size);
-            uint8_t *buf = (uint8_t*)scoped_ptr;
-            memcpy(buf, &catalog_file->id, sizeof(uint64_t));
-            memcpy(buf + sizeof(uint64_t), catalog_file->path, path_size);
-
-            struct xnitemid id;
-            xn_ensure(xnhp_insert(hp, tx, buf, size, &id));
+        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_aligned_malloc, &scoped_ptr, XNPG_SZ);
+        uint8_t *buf = (uint8_t*)scoped_ptr;
+        memset(buf, 0, XNPG_SZ);
+        for (int i = 0; i < 32; i++) {
+            xn_ensure(xnfile_write(log_file, buf, i * XNPG_SZ, XNPG_SZ));
         }
     }
 
-    //TODO load in all files into memory for quick access from array
-
-    xn_ensure(xntx_commit(tx));
+    //need root page table initialized before transactions can be created
+    xnmm_alloc(xntbl_free, xntbl_create, &db->pg_tbl, true);
 
     xn_ensure(xndb_recover(db));
 
@@ -146,7 +91,7 @@ xnresult_t xndb_free(struct xndb *db) {
     xn_ensure(xnmtx_free((void**)&db->committed_wrtx_lock));
     xn_ensure(xnmtx_free((void**)&db->tx_id_counter_lock));
     xn_ensure(xntbl_free((void**)&db->pg_tbl));
-    for (int i = 0; i < db->file_id_counter; i++) {
+    for (int i = 0; i < db->file_counter; i++) {
         xn_ensure(xnfile_close((void**)&db->files[i]));
     }
     free(db);
@@ -179,12 +124,19 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
             xn_ensure(xnlogitr_read_data(itr, buf, data_size));
 
             //writing changes back to file (but not logging)
-            uint64_t file_id = *((uint64_t*)buf);
-            uint64_t pg_idx = *((uint64_t*)(buf + sizeof(uint64_t)));
-            int off = *((int*)(buf + sizeof(uint64_t) * 2));
+            uint64_t path_size = *((uint64_t*)buf);
+            char path[path_size + 1];
+            memcpy(path, buf + sizeof(uint64_t), path_size);
+            path[path_size] = '\0';
+            uint64_t pg_idx = *((uint64_t*)(buf + sizeof(uint64_t) + path_size));
+            int off = *((int*)(buf + sizeof(uint64_t) * 2 + path_size));
 
-            struct xnpg page = { .file_handle = db->files[file_id], .idx = pg_idx };
-            size_t data_hdr_size = sizeof(file_id) + sizeof(pg_idx) + sizeof(off);
+            xnmm_scoped_alloc(scoped_ptr2, xnfile_close, xnfile_create, (struct xnfile**)&scoped_ptr2, path, 0, false, false);
+            struct xnfile* file = (struct xnfile*)scoped_ptr2;
+
+            //TODO open file here
+            struct xnpg page = { .file_handle = file, .idx = pg_idx };
+            size_t data_hdr_size = sizeof(path_size) + path_size + sizeof(pg_idx) + sizeof(off);
             size_t size = data_size - data_hdr_size;
             xn_ensure(xnpg_write(&page, tx, buf + data_hdr_size, off, size, false));
         }
@@ -228,12 +180,12 @@ xnresult_t xndb_recover(struct xndb *db) {
 
 xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
     xnmm_init();
+
+    out_rs->type = type;
     switch (type) {
         case XNRST_HEAP: {
-            struct xnfile *file;
-            xn_ensure(xndb_get_file(db, &file, filename, create, false, tx));
-            xn_ensure(xnhp_open(&out_rs->as.hp, file, create, tx));
-            out_rs->type = XNRST_HEAP;
+            xn_ensure(xndb_get_file(db, &out_rs->file, filename, create, false));
+            xnmm_alloc(xnhp_free, xnhp_open, (struct xnhp**)&out_rs->as.hp, out_rs->file, create, tx);
             break;
         }
         default:
