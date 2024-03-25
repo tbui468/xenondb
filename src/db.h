@@ -5,6 +5,7 @@
 #include "file.h"
 #include "table.h"
 #include "tx.h"
+#include "heap.h"
 
 struct xndb {
     const char* dir_path;
@@ -46,6 +47,6 @@ struct xnrs {
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
 xnresult_t xndb_recover(struct xndb *db);
-xnresult_t xndb_init_resource(struct xnfile *file, struct xntx *tx);
-xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *filename, bool create, enum xnrst type, struct xntx *tx);
-xnresult_t xndb_close_resource(struct xnrs rs);
+xnresult_t xnrs_open(struct xnrs *rs, struct xndb *db, const char *filename, bool create, enum xnrst type, struct xntx *tx);
+xnresult_t xnrs_close(struct xnrs rs);
+xnresult_t xnrs_put(struct xnrs rs, struct xntx *tx, size_t val_size, uint8_t *val, struct xnitemid *out_id);

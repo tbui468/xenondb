@@ -55,7 +55,6 @@ xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, in
         xnmm_scoped_alloc(scoped_ptr1, xn_free, xn_malloc, &scoped_ptr1, data_size);
         uint8_t *update_data = (uint8_t*)scoped_ptr1;
 
-        printf("in page write: path_size: %ld, path: %s\n", path_size, page->file_handle->path);
         memcpy(update_data, (uint8_t*)&path_size, sizeof(uint64_t));
         memcpy(update_data + sizeof(uint64_t), (uint8_t*)page->file_handle->path, path_size);
         memcpy(update_data + sizeof(uint64_t) + path_size, &page->idx, sizeof(uint64_t));

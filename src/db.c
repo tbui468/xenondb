@@ -178,14 +178,14 @@ xnresult_t xndb_recover(struct xndb *db) {
     return xn_ok();
 }
 
-xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
+xnresult_t xnrs_open(struct xnrs *rs, struct xndb *db, const char *filename, bool create, enum xnrst type, struct xntx *tx) {
     xnmm_init();
 
-    out_rs->type = type;
+    rs->type = type;
     switch (type) {
         case XNRST_HEAP: {
-            xn_ensure(xndb_get_file(db, &out_rs->file, filename, create, false));
-            xnmm_alloc(xnhp_free, xnhp_open, (struct xnhp**)&out_rs->as.hp, out_rs->file, create, tx);
+            xn_ensure(xndb_get_file(db, &rs->file, filename, create, false));
+            xnmm_alloc(xnhp_free, xnhp_open, (struct xnhp**)&rs->as.hp, rs->file, create, tx);
             break;
         }
         default:
@@ -196,12 +196,28 @@ xnresult_t xndb_open_resource(struct xndb *db, struct xnrs *out_rs, const char *
     return xn_ok();
 }
 
-xnresult_t xndb_close_resource(struct xnrs rs) {
+xnresult_t xnrs_close(struct xnrs rs) {
     xnmm_init();
     switch (rs.type) {
         case XNRST_HEAP:
             xnhp_free((void**)&rs.as.hp);
             break;
+        default:
+            xn_ensure(false);
+            break;
+    }
+
+    return xn_ok();
+}
+
+xnresult_t xnrs_put(struct xnrs rs, struct xntx *tx, size_t val_size, uint8_t *val, struct xnitemid *out_id) {
+    xnmm_init();
+
+    switch (rs.type) {
+        case XNRST_HEAP: {
+            xn_ensure(xnhp_insert(rs.as.hp, tx, val, val_size, out_id));
+            break;
+        }
         default:
             xn_ensure(false);
             break;
