@@ -1,0 +1,507 @@
+educational key-value database implemented in C
+    embedded
+    vector-based index
+    automatic indexing when a new vector is inserted - no need to manually update the indexes
+
+Look here (build-your-own books link to get 40% off)
+    Cool app to guide experienced developers to make common tools
+    https://app.codecrafters.io/join?via=byo-books
+
+Look at project 3 and 4 for guidelines/tips for a (distributed key-value store)
+    https://inst.eecs.berkeley.edu/~cs162/fa13/phase3.html
+
+REBOUND
+    N-body simulation library
+    parts written in C
+    Python API
+    can use this along with astrodynamics books
+
+Production database in C to study:
+    BerkeleyDB (early source code in downloads - move to linux to test)
+    LMDB <------seems active
+    SQLite
+        Modifiy BTree storage engine to use more modern techniques from 'Modern B+ Tree Techniques'
+    UnQLite
+
+Contribute to pgvector
+    build postgresql 12
+    set up postgresql account
+    run basic database example using postgresql
+    build pgvector
+    run basic example using pgvector
+    run more complicated example using pgvector
+
+    run through entire documentation tutorial
+    what can I write that improves documentation?
+    https://github.com/pgvector/pgvector
+
+Satellite Reference Database
+    https://www.sciencedirect.com/science/article/abs/pii/S0166361523000635
+    Look at references in paper above for more details
+
+Fun articles on how to learn programming (hacking)
+    http://catb.org/~esr/faqs/hacker-howto.html
+
+Building query engine in Kotlin
+    https://howqueryengineswork.com/01-what-is-a-query-engine.html
+
+Post on r/databasedevelopment 
+    write a few posts first
+    then post information about xenondb
+
+Interesting article
+    https://ravendb.net/articles/re-are-you-sure-you-want-to-use-mmap-in-your-database-management-system
+
+Good tutorial on lsm in Rust (also has link to vector-database)
+    https://skyzh.github.io/mini-lsm/
+
+Good tutorial on sql query compiler in Rust
+    https://andres.senac.es/posts/query-compiler-part-one/
+
+Casey Muratori
+    Computer, Enhance! is a cool course on how a computer works
+
+Raft using Hashicorps implementation (entire blog is great too!)
+    https://notes.eatonphil.com/minimal-key-value-store-with-hashicorp-raft.html
+
+He mentions how the pg parser library docs is confusing - this is a chance to suggest update to docs, and provide examples
+    https://notes.eatonphil.com/distributed-postgres.html
+
+distributed embedded storage engine
+    Raft using Hashicorps implementation (entire blog is great too!)
+        https://notes.eatonphil.com/minimal-key-value-store-with-hashicorp-raft.html
+    Use hashicorps implementation + this XenonDB to 
+
+Great course on distributed databases
+    https://github.com/pingcap/talent-plan
+
+Great technical blog
+    https://jack-vanlightly.com/blog/2023/11/14/the-architecture-of-serverless-data-systems
+
+    Introduction:
+        What is this series of articles about?
+        How multi-tenancy on serverlss data systems work.
+
+    Chapter 1: Amazon DynamoDB
+        How does DynamoDB work?  A key-value store that has single digit millisecond latency.
+        Uses paxos/two-phase commit to keep data consistent???
+    Chapter 2:
+    Chapter 3:
+    Chapter 4:
+    Chapter 5:
+    Chapter 6:
+
+Storage
+    file - syscalls to write to OS file system
+    page - returns page from a give index + filename. encrypt + compress data on pages???
+    tx - allocate/free pages using bitmap, and write/read pages.  copy-on-write + optimistic concurrency control
+    log - writes to WAL.  Allows shipping logs for recovery + replication
+Persistent Data structures
+    heap - slotted page
+    hash - persistent hash index using extendible hash table
+    btree - persistent B+ tree index
+
+r/databasedevelopment is a great subreddit (significantly better than most programming subreddits)
+
+'distributed computing musings' is a great blog
+
+Storage engine in C book!  https://github.com/ayende/libgavran
+    Chapter 2: Error Handling and Cleanup
+        Use compiler to force caller to deal with return status of a call
+        Use compiler (__attribute__(__cleanup__)) to do memory cleanup at end of scope
+        Push errors onto error stack to allow something similar to a stack trace during errors
+    Chapter 3: Filesystem Abstraction
+        using fsync on a parent directory saves metadata (prevents file from being lost in case of power loss??)
+        platform abstraction layer is the software between the storage engine and the OS
+        fsync is slow, but necessary to make sure data is on disk
+        Using mmap for read-only
+        O_DIRECT will bypass the kernel buffers, but data may still get stuck in the hardware write-back cache - still need fsync to put to stable storage
+        using fwrite will store data in the library buffer, and fflush can be used (fsync is not required if so)
+        Should fsync the parent directory when a new file is created for the same reasons above
+        Good article and sample code for dealing with filesystems:
+            https://lwn.net/Articles/457667/
+    Chapter 4: Read and Write to File
+        Since mmap is used for read-only, need to copy page into buffer for writes
+        copy-on-write (technique above) allows rollbacks by simply discarding the buffer without writing to disk
+        At this point pages can be modified and written to disk
+        All changes go through a transaction 
+    Chapter 5: File Headers, Freeing and Allocating Pages
+        Use a bitmap to track free pages
+    Chapter 6: Allocating and Freeing Multiple Pages
+        Some records are larger than a single page size, and require overflow pages
+        This engine will allocate and free the page + overflow pages as a single unit
+        Metadata about size of these units is necessary in page headers
+    Chapter 7: Snapshot isolation
+        Only one write tx at a time, and multiple read txs
+        A problem arises (non-repeatable read) for read tx if the write tx commits and the data is updated
+        To prevent this, write tx will make a new object version on commit
+        Any new read tx will then use this new object, but active read tx when write tx opened will use old object
+        Only when ALL old read tx close will the new object be writtent to disk
+    Chapter 8: WAL
+        This version of WAL doesn't have an undo phase since rollbacks are never written to disk in the first place
+        Currently assuming WAL records are written in their entirety - this is not necessarily true
+        Use O_DIRECT | O_DSYNC to make writes to disk synchronous - this is faster than fsync or fddatasync
+            Using this with open doesn't require fsync of fflush since we aren't using libc streaming buffers either
+        Use a hash to check if WAL records are written in their entirety
+        Use strace on tests to see what system calls are being called
+    Chapter 9: Improving the WAL
+        Use hash to verify log record written in entirety
+        Using libsodium as hashing library
+        If corruption found, forcing use to restore from backup is probably the safest option to take
+        Calling fsync whenever there are no active tx AND WAL is over half-full will prevent fsync from running too often
+        diff writes can be used to reduce the amount written to disk
+        Compress the WAL records to improve performance (just compressing is faster than writing to disk)
+    Chapter 10: Increasing File Size
+        Increasing file size by percent of current file
+        Multiple WAL files are needed since there has to be no running transactions for a WAL to be truncated
+        Use two WAL files (one active and other is inactive)
+        Data and WAL may be stored on different drives (eg, WAL drive is faster since we need to write to disk for commits)
+    Chapter 11: Hashing Again
+        BLAKE2b hash algorithm is used to hash transaction data to ensure it's not corrupt
+        Transparent Data Encryption (TDE) means all data (on disk and in memory) is encrypted
+        Only data that is held by an active tx is not encrypted
+        WAL will not be encrypted (again) because we were writing diffs before, and this doesn't work...?
+    Chapter 12: 32-bit Support
+        Many IoT devices use 32-bit processors, so should support them
+        Limits on memory (2GB or 3GB using extra options) on 32-bit systems means we can't use mmap - so just use read/write instead
+    Chapter 13: Log Shipping
+        WAL record all changes, so this can be used to create replicas
+        Can also use these logs to perform backup
+        This chapter ends the infrastructure part of the program
+    Chapter 14: Persistent Hash Table
+        extendible hash table has been around for 30 years, but still useful
+    Chapter 15: Raw Data Containers
+        putting data into container returns and opaque item handle for later use (if necessary)
+        using a slotted page (called the borders 'floor' and 'ceil')
+        item_id has both page number and index into array encoded - this allows quick lookup using item_id only
+        using the index into the array allows the item_id to remain stable over lifetime of data (pointer can be changed if data moves around)
+        using 6K as maximum value size to fit in a page - if larger, then it will be put in an overflow page and the page number saved in slot
+        Use a hash table (made in previous chapter) to track free space in each container - this can be checked when trying to find container to insert data
+        defrag can be used if ceil - floor is smaller than free space available
+        containers can be dropped too
+
+    Read this document in it's entirety
+    Read the code in it's entirety (along with the documents as a guide)
+        Look at tests in each chapter to understand interface implemented
+        Look at implementation if curious, but should try to implement the interfaces by myself
+
+Steps to build with debug info, and use backtrace to find line of code causing segfault
+    gcc with -g flag
+    gdb ./main
+    run (will hit seg fault)
+    backtrace (print out function calls leading to segfault)
+
+study facebooks Katran C library for tips on style
+__attribute__((always_inline))
+
+heap scan <-----------------------------------------------------------------------START HERE
+    Heap scans should initialize a container iterator when first created
+    calling next on heap iterator will also call next on container iterator, and move to next container once
+        current container is looked at.
+
+resource scan <------do this next
+    generalizes for all resources
+
+make a heap and fill with vectors
+iterate through heap and find vectors
+iterate through heap and compute l2 distance
+order vectors by distance
+limit number of vectors output
+use and index scan rather than a heap scan (need to implement infflat index)
+
+create table t1 (v1 vector(3), v2 int);
+insert into t1 values (array [-1.0, 1.0, 1.0], -1), 
+                      (array [-2.0, 1.0, 1.0], -2), 
+                      (array [-3.0, 1.0, 1.0], -3),
+                      (array [-4.0, 1.0, 1.0], -4), 
+                      (array [-5.0, 1.0, 1.0], -5);
+select v1 from t1 order by l2_dist([1.0, 1.0, 1.0], v1) limit 3;
+select v1 from t1 order by cosine_similarity([1.0, 1.0, 1.0], v1) limit 3;
+select v1 from t1 order by inner_product([1.0, 1.0, 1.0], v1) limit 3;
+
+use naive k-nearest neighbor algorithm for this
+
+creating a table
+    a table is heap data structure + any indexes (later)
+    schema is used to interpret table data
+    table schema is stored in system catalog (also a heap table)
+
+Create new DB api for creating heap (and also test it) <----------------------------START HERE
+    Write a function for closing resources
+    test opening and closing of resources in test
+    implement functions for put/get/delete
+    test put/get/delete
+
+    put(key, value)
+        for heaps, key can be NULL or an xnitemid
+        NULL means the value is appended, and and itemid means item replaced (delete + append if size new value is different)
+    get(key)
+    delete(key)
+
+    put(key, value)
+        still need a key for a heap - this allows searching by key.  But we also need itemid to put into index
+        stores both key and value in heap
+    delete(key) must have item id
+    get(key) must have item id
+
+    btree index (example)
+        put, delete, and get work the same way, but
+        they return the itemid directly,
+        this itemid can then be used with the heap to access the actual data 
+
+    xndb_open_heap(struct xnhp **out_hp, struct xndb *db, const char *path, bool create) {
+        //create file and put into catalog IF not already
+        //create a heap object
+    }
+
+    run this API in tests to see if it works
+
+
+rework tests so that they all pass again
+    this might be a good chance to drop some tests that test the implementation rather than interfaces
+    we should be testing containers, heaps, tx, isolation, hash (should rename table to this), files
+
+Should add a 'create' boolean parameter to container constructor so that we don't forget to initialize container metadata
+    this was a cause of major bugs 
+    or another option is to add a magic number to beginner of containers to mark them as such
+
+heap_test.h
+    add heap create/free tests
+    test is passing, but for some reason the heapfile only has 0s inside of it - no metadata or heap metadata <----------------------START HERE
+        It may be due to the transaction - transactions are currently set up to only deal with a single data file
+        - the catalog found in db->file_handle.  Maybe this is a bug related to that.  This might be a good chance
+        to rewrite transactions and (hash) tables to take files into consideration.
+
+        Writes are going to the heap file handle, BUT the table is not taking this into acccount.  Tables only store the page index
+        not, and not the actual file.  Since the catalog is opened first
+
+make API for heap creation
+    enum xnrs_type {
+        XNRS_HEAP,
+        XNRS_BTREE,
+        XNRS_HASH,
+        XNRS_IVFFLAT,
+    };
+    xndb_open_resource(struct xndb *db, const char *path, XNRS_HEAP);
+
+when opening a heap
+    xnhp_insert(struct xnhp *hp, struct xntx *tx) {
+        //similar to container insert
+        //if there isn't room in current container, allocate a new one
+    }
+    xnhp_update(struct xnhp *hp, struct xntx *tx) {
+        //similar to container insert
+        //insert data if size is different
+    }
+    xnhp_get(struct xnhp *hp, struct xntx *tx) {
+        //must pass in itemid
+    }
+    xnhp_delete(struct xnhp *hp, struct xntx *tx) {
+        //must pass in itemid
+    }
+
+There's alot of unnecessary copying of buffers when writing to a page
+    xnpg_read and xnpg_write should get pointers directly to mmapped file or buffer in page table
+    so that caller can write directly rather than allocating a buffer to copy data into pagetable/mmapped file
+
+Making a database instance creates a directory with the given name (eg, students, or dummy)
+    Refactored xndb_create so that a directory is created (with the database name) and a catalog + log file
+        are created inside that directory.  Currently a lot of tests are failing.
+
+        db_recover test is failing
+        the test after that (paging_allocate_page) is segfaulting
+
+    Making a heap file or index creates an actual file inside the directory [filename]
+    The log file corresponding to the heap file or index is [filename].log
+
+    databases will now store a handle to the directory and not a file
+
+    dummy
+        dummy_data
+        dummy_data.log
+        table_heap
+        table_heap.log
+        myindex
+        myindex.log
+
+    This allows a database to store multiple files/tables.  Will need a file to store database
+    data - a catalog.  Need to log creation/deletion/size changes of files too
+
+    Catalog will just be a heap file for now - init the heap file and put in all catalog data
+        filename, resource id
+
+    First, put file into directory, and call it "catalog".  "log" also goes into directory
+
+heap file
+    Need to keep one page to store metadata of heap (number of containers, free containers, etc)
+    store that block in index 1
+
+    struct xnhp {
+        int container_count;   
+    };
+
+    xnhp_create(struct xnhp **hp, const char* filename);
+    static xnhp_allocate_container(struct xnhp *hp);
+    xnhp_insert
+        will automatically call allocate to append a new container if not enough room in any of the existing containers
+    xnhp_get
+    xnhp_delete
+    xnhp_defrag
+    xnhp_free(void **hp);
+
+heap iterator
+    struct xnhpitr {
+    };
+
+    xnhpitr_create
+    xnhpitr_next
+    xnhpitr_itemid
+    xnhpitr_data
+    xnhpitr_free
+
+toss a few vectors into the database
+use a naive k-nearest neighbor to compute similarities on the heap file
+
+Look at this for example of how to use pgvector
+    https://www.timescale.com/blog/postgresql-as-a-vector-database-create-store-and-query-openai-embeddings-with-pgvector/
+
+Naive K-nearest neighbors
+Other vector indexes
+
+vector database index
+    where does the vector stuff come in?  Is it only in how the data is indexed?
+    If so, just add in an index.  look at pgvector to hints
+
+
+*******************CORE STRUCTURE DONE AT THIS POINT*************************
+
+B-Tree
+    include a cursor object to iterate through leaf/internal nodes
+    this allows multiple cursors to traverse a tree at a time
+    have children nodes store a pointer to parent - requires more upkeep when things change, but don't need to track path when traversing down a tree
+        sqlite does this
+
+Infrastructure 2 - unlocking mutexes and closing files on function failure
+    open and mtx_lock need to be undone if function they are called in fails
+        close a fd
+        unlock the mtx
+
+    xn_ensure and xnmm_init are adding a lot of code to each function
+        xnmm_init is only needed for a handful of functions
+        should have xn_ensure only cleanup IF xnmm_init is called
+
+        xnmm_init should define a macro in function (XN_MEM_CLEANUP, XN_LOCK_CLEANUP, XN_FILE_CLEANUP)
+        xn_ensure will only cleanup if the macro is defined, othewise it just returns without cleaning up
+        xn_okay and xn_ensure will both undefine that macro
+
+        could make three managers: xnmm, xnlm, xnfm (memory, lock and file manager)
+            each one would free resources if function fails?
+            this would auto close open files, and auto unlock mutexes
+
+    Should any of the free functions every fail?  It's quite a bad situation if it does, so 
+    maybe we shouldn't need to check?  Or check and then exit(1) if it does fail.
+    xnbtree_create
+    xnbtree_insert
+    xnbtree_delete
+    xnbtree_get
+
+Semi-Concurrent writers with overlapping
+    Unlock single-writer mutex after flushing log, but before flushing write data
+    cw - concurrent writers test
+        a write tx has several stages
+            [created][writing][committed][flushed][gc]
+
+        Only one writer can be in the writing stage at any given time
+        Any new writers will be blocked at the 'created' stage.  Once
+        the writing tx moves to committed (log is flushed to disk here), then
+        a blocked writer can enter the 'writing' stage and start writing.
+
+        If a new writer enters the writing stage with an old write tx still in the committed stage,
+        the new write tx will reference the old tx's page table for reads/copy-on-write.
+
+        If a new writer enters the writing stage with an old write tx in the flushed or gc stage,
+        the new write tx will reference the disk for reads/copy-on-write
+
+        Writers can go from the 'writing' to 'committed' stage when done with all writes.  Going
+        from the 'committed' stage to 'flushed' stage requires zero downstream reader txs.
+
+        New readers will reference 
+
+        Can two writers both be in a committed stage??  Yes!!! The old transaction might not be able to
+        go to 'flushed' since there are long-lasting readers downstream.
+
+    cc_new_wrtx_between_old_wrtx_commit_and_flush - new wrtx chains on top of old wrtx page table
+        [disk] <- [notflushed/notgcd write tx] <- [new write tx]
+    cc_new_wrtx_between_old_wrtx_flush_and_gc - new wrtx attaches to db in parallel to old wrtx
+        [disk] <- [flushed/notgcd write tx]
+               <- [new write tx]
+
+    if the old writer is flushed, new writer can attach to db in parallel
+    if the old writer has not flushed, chain new writer
+
+checkpointing
+    log grows nonstop right now and will end up taking more space than database data if not checkpointed/cleaned up
+    how to checkpoint?
+    what about fuzzy checkpointing?
+
+encrypt + compress data
+    how does this work???
+
+Atomic update of txid_incrementer
+----------------------------------------
+write test where two threads try to start transactions over and over
+because txid_incrementer is not protected with a lock, some tx will have the same id
+test should assert that final txid_incrementer value is equal to the number of transactions
+write code to pass this test
+
+*************************Core functionality should be done at this point**********************
+
+WAL
+-------------------------------------
+    If a page needs to be evicted, need to flush log files up to and including the largest lsn in that page <------------------------START HERE
+    This ensures the evicted data is in durable storage.  No need to write logs out everytime (except for maybe testing)
+    Each page needs to keep track of largest lsn written to page so far
+    Logger needs to track largest lsn in current page
+    If a page needs to be evicted, need to flush log IF largest lsn on that page is on log file....?????? (Need to think this through again)
+
+Include Hash of WAL Records within record
+-------------------------------------
+This allows checking to see if entire record was written correctly
+
+Copy-on-Write
+---------------------------------------
+Use mmap for read-only
+When we need to write, copy into buffer and write, then write buffer back to disk
+Pager can still be used, but won't be quite the same as before
+
+Checkpointing
+-----------------------------------------
+Old logs should be disposed of
+Can also checkpoint while database server is still running (look at book)
+
+library
+-----------------------------------
+    build xenondb as a static (or dynamic) library (see how rocksdb does this)
+        change Makefile to compile and link 
+    make a test dir
+        store main test code here
+        test code should link/compile with library
+        then run each test
+
+
+Overflow blocks
+----------------------------------------
+If a Put will overflow the current bucket block, need to add an overflow blocks for the given bucket
+iteration will also need to check overflow blocks
+
+Vaccuum
+-----------------------------------------
+On occasion, defrag a block - can spawn a new thread for this
+
+Defrag algorithm
+    Go through all data records and order them by offset
+    Start from the highest offset and shift the entire record to the right 
+    until the end of the block OR the start of the right-hand side record
+    Update metadata as needed (including clearing out freelist head)
+
+
