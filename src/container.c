@@ -1,35 +1,6 @@
 #include "container.h"
 #include <string.h>
 
-/*
-xnresult_t xnctn_open(struct xnctn **out_ctn, struct xnpg pg, bool create, struct xntx *tx) {
-    xnmm_init();
-    
-    struct xnctn *ctn;
-
-    xnmm_alloc(xn_free, xn_malloc, (void**)&ctn, sizeof(struct xnctn));
-    ctn->pg = pg;
-
-    if (create) {
-        //zero out page
-        xnmm_scoped_alloc(scoped_ptr, xn_free, xn_malloc, &scoped_ptr, XNPG_SZ);
-        uint8_t *buf = (uint8_t*)scoped_ptr;
-        memset(buf, 0, XNPG_SZ);
-        xn_ensure(xnpg_write(&ctn->pg, tx, buf, 0, XNPG_SZ, true));
-
-        //write header
-        uint16_t item_count = 0;
-        uint16_t floor = XNCTN_HDR_SZ;
-        uint16_t ceil = XNPG_SZ;
-        xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&item_count, 0, sizeof(uint16_t), true));
-        xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&floor, sizeof(uint16_t), sizeof(uint16_t), true));
-        xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&ceil, sizeof(uint16_t) * 2, sizeof(uint16_t), true));
-    }
-
-    *out_ctn = ctn;
-    return xn_ok();
-}*/
-
 xnresult_t xnctn_init(struct xnctn *ctn, struct xntx *tx) {
     xnmm_init();
 
@@ -47,12 +18,6 @@ xnresult_t xnctn_init(struct xnctn *ctn, struct xntx *tx) {
     xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&floor, sizeof(uint16_t), sizeof(uint16_t), true));
     xn_ensure(xnpg_write(&ctn->pg, tx, (uint8_t*)&ceil, sizeof(uint16_t) * 2, sizeof(uint16_t), true));
 
-    return xn_ok();
-}
-
-bool xnctn_free(void **c) {
-    xnmm_init();
-    free(*c);
     return xn_ok();
 }
 
@@ -229,42 +194,33 @@ xnresult_t xnctn_update(struct xnctn *ctn, struct xntx *tx, struct xnitemid id, 
 }
 
 
-xnresult_t xnctnitr_create(struct xnctnitr **out_itr, struct xnctn* ctn) {
+xnresult_t xnctnitr_init(struct xnctnitr *itr, struct xnctn ctn, struct xntx *tx) {
     xnmm_init();
 
-    struct xnctnitr *itr;
-    xnmm_alloc(xn_free, xn_malloc, (void**)&itr, sizeof(struct xnctnitr));
     itr->ctn = ctn;
-    itr->idx = -1;
-
-    *out_itr = itr;
+    itr->arr_idx = -1;
+    itr->tx = tx;
 
     return xn_ok();
 }
 
-bool xnctnitr_free(void **i) {
-    xnmm_init();
-    free(*i);
-    return xn_ok();
-}
-
-xnresult_t xnctnitr_next(struct xnctnitr *itr, struct xntx *tx, bool *valid) {
+xnresult_t xnctnitr_next(struct xnctnitr *itr, bool *valid) {
     xnmm_init();
 
     uint16_t item_count;
-    xn_ensure(xnpg_read(&itr->ctn->pg, tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
+    xn_ensure(xnpg_read(&itr->ctn.pg, itr->tx, (uint8_t*)&item_count, 0, sizeof(uint16_t)));
 
     while (true) {
-        itr->idx++;
-        if (itr->idx >= item_count) {
+        itr->arr_idx++;
+        if (itr->arr_idx >= item_count) {
             *valid = false;
             return xn_ok();
         }
 
         //check if valid, if so, break
-        off_t ptr_off = XNCTN_HDR_SZ + itr->idx * sizeof(uint32_t);
+        off_t ptr_off = XNCTN_HDR_SZ + itr->arr_idx * sizeof(uint32_t);
         uint32_t ptr;
-        xn_ensure(xnpg_read(&itr->ctn->pg, tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
+        xn_ensure(xnpg_read(&itr->ctn.pg, itr->tx, (uint8_t*)&ptr, ptr_off, sizeof(uint32_t)));
 
         uint32_t used;
         uint32_t data_size;
@@ -280,7 +236,7 @@ xnresult_t xnctnitr_next(struct xnctnitr *itr, struct xntx *tx, bool *valid) {
 
 xnresult_t xnctnitr_itemid(struct xnctnitr *itr, struct xnitemid *id) {
     xnmm_init();
-    id->pg_idx = itr->ctn->pg.idx;
-    id->arr_idx = itr->idx;
+    id->pg_idx = itr->ctn.pg.idx;
+    id->arr_idx = itr->arr_idx;
     return xn_ok();
 }

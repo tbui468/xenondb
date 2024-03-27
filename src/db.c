@@ -215,7 +215,7 @@ xnresult_t xnrs_put(struct xnrs rs, struct xntx *tx, size_t val_size, uint8_t *v
 
     switch (rs.type) {
         case XNRST_HEAP: {
-            xn_ensure(xnhp_insert(rs.as.hp, tx, val, val_size, out_id));
+            xn_ensure(xnhp_put(rs.as.hp, tx, val, val_size, out_id));
             break;
         }
         default:
@@ -225,3 +225,60 @@ xnresult_t xnrs_put(struct xnrs rs, struct xntx *tx, size_t val_size, uint8_t *v
 
     return xn_ok();
 }
+
+xnresult_t xnrs_get_size(struct xnrs rs, struct xntx *tx, struct xnitemid id, size_t *out_size) {
+    xnmm_init();
+
+    switch (rs.type) {
+        case XNRST_HEAP: {
+            xn_ensure(xnhp_get_size(rs.as.hp, tx, id, out_size));
+            break;
+        }
+        default:
+            xn_ensure(false);
+            break;
+    }
+
+    return xn_ok();
+}
+
+xnresult_t xnrs_get(struct xnrs rs, struct xntx *tx, struct xnitemid id, uint8_t *val, size_t size) {
+    xnmm_init();
+
+    switch (rs.type) {
+        case XNRST_HEAP: {
+            xn_ensure(xnhp_get(rs.as.hp, tx, id, val, size));
+            break;
+        }
+        default:
+            xn_ensure(false);
+            break;
+    }
+
+    return xn_ok();
+}
+
+xnresult_t xnrs_del(struct xnrs rs, struct xntx *tx, struct xnitemid id) {
+    xnmm_init();
+
+    switch (rs.type) {
+        case XNRST_HEAP: {
+            xn_ensure(xnhp_del(rs.as.hp, tx, id));
+            break;
+        }
+        default:
+            xn_ensure(false);
+            break;
+    }
+
+    return xn_ok();
+}
+
+/*
+xnresult_t xnrsitr_open(struct xnrsitr *itr, struct xnrs rs, struct xntx *tx) {
+    //set
+}
+
+xnresult_t xnrsitr_next(struct xnrsitr *itr, struct xnrs rs, struct xntx *tx) {
+
+}*/

@@ -76,7 +76,16 @@ static xnresult_t xnhp_append_container(struct xnhp *hp, struct xntx *tx, struct
     return xn_ok();
 }
 
-xnresult_t xnhp_insert(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t size, struct xnitemid *id) {
+static xnresult_t xnhp_get_ctn(struct xnhp *hp, struct xnctn *ctn, uint64_t pg_idx) {
+    xnmm_init();
+
+    ctn->pg.file_handle = hp->meta.file_handle;
+    ctn->pg.idx = pg_idx;
+
+    return xn_ok();
+}
+
+xnresult_t xnhp_put(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t size, struct xnitemid *id) {
     xnmm_init();
 
     struct xnctn ctn;
@@ -92,3 +101,62 @@ xnresult_t xnhp_insert(struct xnhp *hp, struct xntx *tx, uint8_t *buf, size_t si
 
     return xn_ok();
 }
+
+xnresult_t xnhp_get_size(struct xnhp *hp, struct xntx *tx, struct xnitemid id, size_t *out_size) {
+    xnmm_init();
+
+    struct xnctn ctn;
+    xn_ensure(xnhp_get_ctn(hp, &ctn, id.pg_idx));
+    xn_ensure(xnctn_get_size(&ctn, tx, id, out_size));
+
+    return xn_ok();
+}
+
+xnresult_t xnhp_get(struct xnhp *hp, struct xntx *tx, struct xnitemid id, uint8_t *val, size_t size) {
+    xnmm_init();
+
+    struct xnctn ctn;
+    xn_ensure(xnhp_get_ctn(hp, &ctn, id.pg_idx));
+    xn_ensure(xnctn_get(&ctn, tx, id, val, size));
+
+    return xn_ok();
+}
+
+xnresult_t xnhp_del(struct xnhp *hp, struct xntx *tx, struct xnitemid id) {
+    xnmm_init();
+
+    struct xnctn ctn;
+    xn_ensure(xnhp_get_ctn(hp, &ctn, id.pg_idx));
+    xn_ensure(xnctn_delete(&ctn, tx, id));
+
+    return xn_ok();
+}
+
+/*
+struct xnhpscan {
+    struct xnhp hp;
+    struct xntx *tx;
+    uint64_t pg_idx;
+    int arr_idx;
+};*/
+
+/*
+xnresult_t xnhpscan_open(struct xnhpscan *scan, struct xnhp hp, struct xntx *tx) {
+    scan->hp = hp;
+    scan->tx = tx;
+
+    //TODO; find first pg_idx in heap and save to scan->pg_idx
+    //make a container iterator for it
+}
+
+xnresult_t xnhpscan_close(struct xnhpscan *scan) {
+    //TODO don't really need to do anything right now
+}
+
+xnresult_t xnhpscan_next(struct xnhpscan *scan, bool *result) {
+    //go container iterator to next position
+}
+
+xnresult_t xnhpscan_itemid(struct xnhpscan *scan, struct xnitemid *id) {
+    //call directly to item id in container
+}*/

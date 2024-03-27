@@ -44,9 +44,23 @@ struct xnrs {
     } as;
 };
 
+/*
+struct xnrsitr {
+    enum xnrst type;
+    struct xnrs rs;
+    union {
+        struct xnhpitr hpitr;
+    } as;
+}*/
+
 xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db);
 xnresult_t xndb_free(struct xndb *db);
 xnresult_t xndb_recover(struct xndb *db);
 xnresult_t xnrs_open(struct xnrs *rs, struct xndb *db, const char *filename, bool create, enum xnrst type, struct xntx *tx);
 xnresult_t xnrs_close(struct xnrs rs);
 xnresult_t xnrs_put(struct xnrs rs, struct xntx *tx, size_t val_size, uint8_t *val, struct xnitemid *out_id);
+xnresult_t xnrs_get_size(struct xnrs rs, struct xntx *tx, struct xnitemid id, size_t *out_size);
+xnresult_t xnrs_get(struct xnrs rs, struct xntx *tx, struct xnitemid id, uint8_t *val, size_t size);
+xnresult_t xnrs_del(struct xnrs rs, struct xntx *tx, struct xnitemid id);
+//xnresult_t xnrsitr_open(struct xnrsitr *itr, struct xnrs rs, struct xntx *tx);
+//xnresult_t xnrsitr_next(struct xnrsitr *itr, struct xnrs rs, struct xntx *tx);
