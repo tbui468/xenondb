@@ -16,6 +16,7 @@
 #include "container_test.h"
 #include "containeritr_test.h"
 #include "heap_test.h"
+#include "vector_test.h"
 
 void append_test(void (*fcn)(void)) {
     fcns[fcn_count++] = fcn;    
@@ -41,6 +42,7 @@ int main() {
     containeritr_tests();
     db_tests();*/
     heap_tests();
+	vector_tests();
     
     int passed_count = 0;
     
