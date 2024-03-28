@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <assert.h>
 
 static void xndb_make_path(char *out, const char *path1, const char *path2) {
     out[0] = '\0';
@@ -269,7 +270,33 @@ xnresult_t xnrsscan_open(struct xnrsscan *scan, struct xnrs rs) {
 			xn_ensure(xnhpscan_open(&scan->as.hpscan, rs.as.hp));
 			break;
 		default:
-			xn_ensure(false);
+			assert(false);
+			break;
+	}
+	return xn_ok();
+}
+
+xnresult_t xnrsscan_next(struct xnrsscan *scan, bool *more) {
+    xnmm_init();
+	switch (scan->rs.type) {
+		case XNRST_HEAP:
+			xn_ensure(xnhpscan_next(&scan->as.hpscan, more));
+			break;
+		default:
+			assert(false);
+			break;
+	}
+	return xn_ok();
+}
+
+xnresult_t xnrsscan_itemid(struct xnrsscan *scan, struct xnitemid *id) {
+    xnmm_init();
+	switch (scan->rs.type) {
+		case XNRST_HEAP:
+			xn_ensure(xnhpscan_itemid(&scan->as.hpscan, id));
+			break;
+		default:
+			assert(false);
 			break;
 	}
 	return xn_ok();

@@ -6,7 +6,7 @@ xnresult_t xnhp_open(struct xnhp *hp, struct xnfile *file, bool create, struct x
     xnmm_init();
 
     hp->meta.file_handle = file;
-    hp->meta.idx = 1;
+    hp->meta.idx = 1; //hard-coding metadata page
 	hp->tx = tx;
 
     if (create) {
@@ -41,6 +41,21 @@ xnresult_t xnhp_open(struct xnhp *hp, struct xnfile *file, bool create, struct x
     return xn_ok();
 }
 
+static xnresult_t xnhp_get_first_ctn(struct xnhp hp, struct xnctn *ctn) {
+    xnmm_init();
+
+    struct xnctn meta_ctn;
+	xn_ensure(xnctn_open(&meta_ctn, hp.meta, hp.tx));
+
+    uint64_t first_page_idx;
+    struct xnitemid id = { .pg_idx = 1 /*heap metadata page*/, .arr_idx = 0 /*current container idx*/ }; 
+    xn_ensure(xnctn_get(&meta_ctn, id, (uint8_t*)&first_page_idx, sizeof(uint64_t)));
+
+	struct xnpg first_pg = { .file_handle = hp.meta.file_handle, .idx = first_page_idx };
+	xn_ensure(xnctn_open(ctn, first_pg, hp.tx));
+    return xn_ok();
+}
+
 static xnresult_t xnhp_get_current_ctn(struct xnhp *hp, struct xnctn* out_ctn) {
     xnmm_init();
 
@@ -56,6 +71,19 @@ static xnresult_t xnhp_get_current_ctn(struct xnhp *hp, struct xnctn* out_ctn) {
     return xn_ok();
 }
 
+static xnresult_t xnhp_set_current_ctn(struct xnhp *hp, uint64_t cur_page_idx) {
+	xnmm_init();
+
+    struct xnctn meta_ctn;
+	xn_ensure(xnctn_open(&meta_ctn, hp->meta, hp->tx));
+	struct xnitemid new_id;
+    struct xnitemid id = { .pg_idx = 1 /*heap metadata page*/, .arr_idx = 1 /*current container idx*/ }; 
+	xn_ensure(xnctn_update(&meta_ctn, id, (uint8_t*)&cur_page_idx, sizeof(uint64_t), &new_id));
+	xn_ensure(id.pg_idx == new_id.pg_idx && id.arr_idx == new_id.arr_idx);
+
+	return xn_ok();
+}
+
 static xnresult_t xnhp_append_container(struct xnhp *hp, struct xnctn *out_ctn) {
     xnmm_init();
 
@@ -63,6 +91,7 @@ static xnresult_t xnhp_append_container(struct xnhp *hp, struct xnctn *out_ctn) 
     xn_ensure(xnfile_allocate_page(hp->meta.file_handle, hp->tx, &new_page));
 	xn_ensure(xnctn_open(out_ctn, new_page, hp->tx));
     xn_ensure(xnctn_init(out_ctn));
+	xn_ensure(xnhp_set_current_ctn(hp, new_page.idx));
 
     return xn_ok();
 }
@@ -123,41 +152,56 @@ xnresult_t xnhp_del(struct xnhp *hp, struct xnitemid id) {
 
     return xn_ok();
 }
-/*
-struct xnhpscan {
-    struct xnhp hp;
-    uint64_t pg_idx;
-    int arr_idx;
-};*/
+
 xnresult_t xnhpscan_open(struct xnhpscan *scan, struct xnhp hp) {
+	xnmm_init();
 	scan->hp = hp;
-    //TODO; find first pg_idx in heap and save to scan->pg_idx
-    //make a container iterator for it
-}
 
-/*
-struct xnhpscan {
-    struct xnhp hp;
-    struct xntx *tx;
-    uint64_t pg_idx;
-    int arr_idx;
-};*/
+	struct xnctn ctn;
+	xn_ensure(xnhp_get_first_ctn(hp, &ctn));
 
-/*
-xnresult_t xnhpscan_open(struct xnhpscan *scan, struct xnhp hp, struct xntx *tx) {
-    scan->hp = hp;
-    scan->tx = tx;
+	xn_ensure(xnctnitr_init(&scan->ctnitr, ctn));
 
-}
-
-xnresult_t xnhpscan_close(struct xnhpscan *scan) {
-    //TODO don't really need to do anything right now
+	return xn_ok();
 }
 
 xnresult_t xnhpscan_next(struct xnhpscan *scan, bool *result) {
-    //go container iterator to next position
+	xnmm_init();
+
+	bool ctn_result;
+	xn_ensure(xnctnitr_next(&scan->ctnitr, &ctn_result));
+	if (ctn_result) {
+		*result = true;
+		return xn_ok();
+	}
+
+	uint64_t next_pg_idx = scan->ctnitr.ctn.pg.idx + 1;
+    struct xnctn last_ctn;
+    xn_ensure(xnhp_get_current_ctn(&scan->hp, &last_ctn));
+
+	if (last_ctn.pg.idx < next_pg_idx) {
+		*result = false;
+		return xn_ok();
+	}
+
+	struct xnctn next_ctn;
+	struct xnpg next_pg = { .file_handle = scan->hp.meta.file_handle, .idx = next_pg_idx };
+	xn_ensure(xnctn_open(&next_ctn, next_pg, scan->hp.tx));
+
+	xn_ensure(xnctnitr_init(&scan->ctnitr, next_ctn));
+	xn_ensure(xnctnitr_next(&scan->ctnitr, &ctn_result));
+	if (ctn_result) {
+		*result = true;
+		return xn_ok();
+	}
+
+	*result = false;
+	return xn_ok();
 }
 
 xnresult_t xnhpscan_itemid(struct xnhpscan *scan, struct xnitemid *id) {
-    //call directly to item id in container
-}*/
+	xnmm_init();
+	xn_ensure(xnctnitr_itemid(&scan->ctnitr, id));
+	return xn_ok();
+}
+

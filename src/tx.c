@@ -2,6 +2,7 @@
 #include "log.h"
 #include "db.h"
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -84,7 +85,7 @@ static xnresult_t xntx_free(struct xntx *tx) {
 xnresult_t xntx_close(void **t) {
     xnmm_init();
     struct xntx *tx = (struct xntx*)(*t);
-    xn_ensure(tx->mode == XNTXMODE_RD);
+    assert(tx->mode == XNTXMODE_RD);
 
     if (tx->mod_pgs) {
         xn_ensure(xn_atomic_decrement_and_signal(&tx->db->committed_wrtx->rdtx_count, tx->db->committed_wrtx->rdtx_count_lock, &mem_rdtxs_cv));
@@ -97,7 +98,7 @@ xnresult_t xntx_close(void **t) {
 
 xnresult_t xntx_commit(struct xntx *tx) {
     xnmm_init();
-    xn_ensure(tx->mode == XNTXMODE_WR);
+    assert(tx->mode == XNTXMODE_WR);
 
     //append commit log record and flush log
     {
@@ -146,6 +147,7 @@ xnresult_t xntx_commit(struct xntx *tx) {
 xnresult_t xntx_rollback(void **t) {
     xnmm_init();
     struct xntx *tx = (struct xntx*)(*t);
+    assert(tx->mode == XNTXMODE_WR);
     xn_ensure(xn_mutex_unlock(tx->db->wrtx_lock));
     xn_ensure(xntx_free(tx));
 

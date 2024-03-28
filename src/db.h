@@ -63,3 +63,5 @@ xnresult_t xnrs_get_size(struct xnrs rs, struct xnitemid id, size_t *out_size);
 xnresult_t xnrs_get(struct xnrs rs, struct xnitemid id, uint8_t *val, size_t size);
 xnresult_t xnrs_del(struct xnrs rs, struct xnitemid id);
 xnresult_t xnrsscan_open(struct xnrsscan *scan, struct xnrs rs);
+xnresult_t xnrsscan_next(struct xnrsscan *scan, bool *more);
+xnresult_t xnrsscan_itemid(struct xnrsscan *scan, struct xnitemid *id);
