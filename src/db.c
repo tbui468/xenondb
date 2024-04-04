@@ -64,10 +64,9 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
 
     struct xnfile *log_file;
     xn_ensure(xndb_get_file(db, &log_file, "log", create, true));
-    xn_ensure(xnfile_set_size(log_file, 32 * XNPG_SZ));
-    xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_file, create);
 
     if (create) {
+        xn_ensure(xnfile_set_size(log_file, 32 * XNPG_SZ));
         xnmm_scoped_alloc(scoped_ptr, xn_free, xn_aligned_malloc, &scoped_ptr, XNPG_SZ);
         uint8_t *buf = (uint8_t*)scoped_ptr;
         memset(buf, 0, XNPG_SZ);
@@ -75,6 +74,8 @@ xnresult_t xndb_create(const char *dir_path, bool create, struct xndb **out_db) 
             xn_ensure(xnfile_write(log_file, buf, i * XNPG_SZ, XNPG_SZ));
         }
     }
+
+    xnmm_alloc(xnlog_free, xnlog_create, &db->log, log_file, create);
 
     //need root page table initialized before transactions can be created
     xnmm_alloc(xntbl_free, xntbl_create, &db->pg_tbl, true);
@@ -132,8 +133,11 @@ static xnresult_t xndb_redo(struct xndb *db, struct xntx *tx, uint64_t page_idx,
             uint64_t pg_idx = *((uint64_t*)(buf + sizeof(uint64_t) + path_size));
             int off = *((int*)(buf + sizeof(uint64_t) * 2 + path_size));
 
-            xnmm_scoped_alloc(scoped_ptr2, xnfile_close, xnfile_create, (struct xnfile**)&scoped_ptr2, path, 0, false, false);
-            struct xnfile* file = (struct xnfile*)scoped_ptr2;
+            //TODO this pointer needs to exist until tx writes are flushed (which is not happending in this function)
+            //xnmm_scoped_alloc(scoped_ptr2, xnfile_close, xnfile_create, (struct xnfile**)&scoped_ptr2, path, 0, false, false);
+            //struct xnfile* file = (struct xnfile*)scoped_ptr2;
+            struct xnfile *file;
+            xn_ensure(xndb_get_file(db, &file, path, false, false));
 
             //TODO open file here
             struct xnpg page = { .file_handle = file, .idx = pg_idx };

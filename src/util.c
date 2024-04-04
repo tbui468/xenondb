@@ -2,6 +2,8 @@
 #include "util.h"
 
 #include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 #include <fcntl.h>
 
 bool xn_free(void **ptr) {
@@ -40,7 +42,11 @@ xnresult_t xn_stat(const char *path, struct stat *s) {
 
 xnresult_t xn_open(const char *path, int flags, mode_t mode, int *out_fd) {
     xnmm_init();
-    xn_ensure((*out_fd = open(path, flags, mode)) != -1);
+    
+    if ((*out_fd = open(path, flags, mode)) == -1) {
+        printf("xn_open[%s]:  %s\n", path, strerror(errno));
+    }
+
     return xn_ok();
 }
 

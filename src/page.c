@@ -6,6 +6,7 @@
 #include "db.h"
 
 #include <string.h>
+#include <libgen.h>
 
 xnresult_t xnpg_flush(struct xnpg *page, const uint8_t *buf) {
     xnmm_init();
@@ -50,13 +51,18 @@ xnresult_t xnpg_write(struct xnpg *page, struct xntx *tx, const uint8_t *buf, in
     memcpy(cpy + offset, buf, size);
 
     if (log) {
-        uint64_t path_size = strlen(page->file_handle->path);
+        //get filename from absolute file path
+        char filename_buf[strlen(page->file_handle->path) + 1];
+        memcpy(filename_buf, page->file_handle->path, strlen(page->file_handle->path) + 1);
+        char *filename = basename(filename_buf);
+        
+        uint64_t path_size = strlen(filename);
         size_t data_size = sizeof(uint64_t) + path_size + sizeof(uint64_t) + sizeof(int) + size; //uint64_t = path size, uint64_t = page_idx, int = offset
         xnmm_scoped_alloc(scoped_ptr1, xn_free, xn_malloc, &scoped_ptr1, data_size);
         uint8_t *update_data = (uint8_t*)scoped_ptr1;
 
         memcpy(update_data, (uint8_t*)&path_size, sizeof(uint64_t));
-        memcpy(update_data + sizeof(uint64_t), (uint8_t*)page->file_handle->path, path_size);
+        memcpy(update_data + sizeof(uint64_t), (uint8_t*)filename, path_size);
         memcpy(update_data + sizeof(uint64_t) + path_size, &page->idx, sizeof(uint64_t));
         memcpy(update_data + sizeof(uint64_t) * 2 + path_size, &offset, sizeof(int));
         memcpy(update_data + sizeof(uint64_t) * 2 + path_size + sizeof(int), buf, size);
